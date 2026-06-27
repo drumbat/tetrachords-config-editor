@@ -382,13 +382,24 @@ body {
    ===================================================================== */
 
 :root {
-  --w-bg:        #ffffff;
+  /* Display-rail contrast knobs. Set on <html> at runtime (editor-app.jsx); the
+     defaults below keep the page exactly as it was. Values are UNITLESS (a slider
+     fraction × 100); the derivations read them as `calc(var(--x) * 1%)`. Defined
+     here at :root so the token derivations AND the page <body> background resolve
+     them — none of those are descendants of .tc-app, where --text-scale lives. */
+  --paper-warmth:    0;   /* 0 = pure-white page → 100 = cream #FBF8ED (light only) */
+  --grey-lift-light: 0;   /* 0 = base greys → 100 = greys fully lifted toward --w-ink */
+  --grey-lift-dark:  0;   /* dark-mode counterpart (declared here so it's always set) */
+
+  --w-bg:        color-mix(in srgb, #ffffff, #FBF8ED calc(var(--paper-warmth) * 1%));
   --w-ink:       #111111;   /* primary text / lines */
-  --w-ink-2:     #6b6b6b;   /* secondary */
-  --w-ink-3:     #9a9a9a;   /* tertiary */
+  --w-ink-2-base: #6b6b6b;  /* secondary — base before grey-lift */
+  --w-ink-3-base: #9a9a9a;  /* tertiary  — base before grey-lift */
+  --w-ink-2:     color-mix(in srgb, var(--w-ink-2-base), var(--w-ink) calc(var(--grey-lift-light) * 1%));   /* secondary */
+  --w-ink-3:     color-mix(in srgb, var(--w-ink-3-base), var(--w-ink) calc(var(--grey-lift-light) * 1%));   /* tertiary */
   --w-line:      #111111;   /* structural box lines (squares) */
   --w-hair:      #e6e4df;   /* light row dividers */
-  --w-rail-bg:   #fafafa;
+  --w-rail-bg:   color-mix(in srgb, #fafafa, #FBF8ED calc(var(--paper-warmth) * 1%));   /* warms with the page, stays a touch darker than it */
   --w-track-1:   #c9b200;   /* slightly darkened LEDs so they read on white */
   --w-track-2:   #009fb8;
   --w-track-3:   #16930a;
@@ -427,6 +438,18 @@ body {
   display: block; margin-top: 5px;
   font-family: var(--ci-font-display); font-weight: 400;
   font-size: 10px; letter-spacing: 0.30em; color: var(--w-ink-2); text-transform: uppercase;
+}
+/* BETA marker in the header — large square ink badge; inverts cleanly in dark
+   mode (ink/bg are theme tokens). Trailing letter-spacing is offset by a smaller
+   right padding so the block reads optically centred. */
+.tc-beta {
+  align-self: center;
+  font-family: var(--ci-font-display); font-weight: 700;
+  font-size: 16px; letter-spacing: 0.28em; line-height: 1;
+  text-transform: uppercase;
+  color: var(--w-bg); background: var(--w-ink);
+  border: 1px solid var(--w-ink); border-radius: 0;
+  padding: 6px 7px 6px 11px;
 }
 .tc-topbar-spacer { flex: 1; }
 
@@ -1019,10 +1042,12 @@ body {
 body.theme-dark { background: #101010; }
 
 .tc-app.theme-dark {
-  --w-bg:      #101010;   /* near-black substrate */
+  --w-bg:      #101010;   /* near-black substrate (paper-warmth is light-only; stays #101010) */
   --w-ink:     #ECEAE4;   /* near-white ink */
-  --w-ink-2:   #b4b1a9;
-  --w-ink-3:   #7f7d77;
+  --w-ink-2-base: #b4b1a9;
+  --w-ink-3-base: #7f7d77;
+  --w-ink-2:   color-mix(in srgb, var(--w-ink-2-base), var(--w-ink) calc(var(--grey-lift-dark) * 1%));
+  --w-ink-3:   color-mix(in srgb, var(--w-ink-3-base), var(--w-ink) calc(var(--grey-lift-dark) * 1%));
   --w-line:    #ECEAE4;   /* structural box lines flip to light */
   --w-hair:    #2a2a2a;   /* row dividers */
   --w-rail-bg: #1b1b1b;
@@ -1065,7 +1090,7 @@ body.theme-dark { background: #101010; }
 
 </style>
 <style>
-  html, body { margin: 0; height: 100%; background: #ffffff; }
+  html, body { margin: 0; height: 100%; background: var(--w-bg); }
   .tc-select option { background: #fff; color: #111; }
 </style>
 <script>/* React 18.3.1 (production.min) — vendored */
@@ -2977,6 +3002,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     THEME_KEY: THEME_KEY, storedThemeDark: storedThemeDark,
     persistThemeDark: persistThemeDark, themeClass: themeClass,
     buildSections: buildSections,   // pure schema -> sections (hidden keys filtered); exposed for host tests
+    buildStoreState: buildStoreState,   // pure persisted-draft (STORE) shape; exposed for host tests
+    restoreContrastKnobs: restoreContrastKnobs,   // pure STORE -> contrast knobs (ungated); exposed for host tests
   };
 
   // ─── schema → sections (sim seed or live LIST_KEYS records) ─────
@@ -3040,6 +3067,31 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   var SIM_TOTAL = allKeys(SIM_SECTIONS).length;   // seed count after hidden keys are dropped (#2)
 
   function loadStore() { try { return JSON.parse(localStorage.getItem(STORE) || 'null') || {}; } catch (e) { return {}; } }
+
+  // The persisted draft cache (STORE) shape — pure so host tests can pin the
+  // contract: every field the app restores on load must be written here. scaleV
+  // gates ONLY text/title scale (a bump resets those); the contrast knobs
+  // (greyLift*/paperWarmth) are ungated (absent → 0), so they must never drop out.
+  function buildStoreState(s) {
+    return {
+      committed: s.committed, values: s.values,
+      textScale: s.textScale, titleScale: s.titleScale, scaleV: SCALE_V,
+      greyLiftLight: s.greyLiftLight, greyLiftDark: s.greyLiftDark, paperWarmth: s.paperWarmth,
+    };
+  }
+
+  // Load-side counterpart to buildStoreState: restore the contrast knobs from a
+  // parsed STORE. UNGATED by scaleV (unlike text/title scale) — absent → 0 (page
+  // unchanged), present → restored — so a scaleV bump never resets them. Pure, for
+  // host tests.
+  function restoreContrastKnobs(saved) {
+    saved = saved || {};
+    return {
+      greyLiftLight: saved.greyLiftLight || 0,
+      greyLiftDark: saved.greyLiftDark || 0,
+      paperWarmth: saved.paperWarmth || 0,
+    };
+  }
 
   function readFileBytes(file) {
     return new Promise(function (res, rej) {
@@ -3276,7 +3328,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     return ce('div', { className: 'tc-topbar' },
       ce('div', { className: 'tc-brand' },
         ce('img', { src: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNTEuNSAxNTAuNCI+PGRlZnM+PC9kZWZzPjxnIGlkPSJMYXllcl8yIiBkYXRhLW5hbWU9IkxheWVyIDIiPjxnIGlkPSJMT0dPIj48Y2lyY2xlIGNsYXNzPSJjbHMtMSIgY3g9IjkwLjUiIGN5PSI4LjQiIHI9IjgiPjwvY2lyY2xlPjxwYXRoIGNsYXNzPSJjbHMtMSIgZD0iTTY2LjE3LDEzNWwtLjA2LS4wOUMzNi42MSwxMzAuMjcsMTQsMTA1LjcyLDE0LDc0LjljMC0zMS40NCwyMS43NS01NC41Miw1MS02MC4yYTQuODcsNC44NywwLDAsMSwxLS4yNywzLjg0LDMuODQsMCwwLDEsLjU0LS4yNXYwQTcuNCw3LjQsMCwwLDAsNjMuNSwwYTcuMzIsNy4zMiwwLDAsMC0yLjU3LjQ3LDIuOTEsMi45MSwwLDAsMC0uNTcuMDZBNzYsNzYsMCwwLDAsMCw3NC45YzAsMzcuMSwyNCw2Ny43Miw1OC44Myw3NC4zNmwuNDEsMGE1LDUsMCwwLDEsMS4zOC4yLDEuNTQsMS41NCwwLDAsMSwuMywwbDEsLjA4aC4xNWE1LjgzLDUuODMsMCwwLDEsMS4yMS4xM2guMTVhNi43LDYuNywwLDAsMSwuOTIuMDhsMCwwYTcuOSw3LjksMCwwLDAsMS4xLjA5QTcuNCw3LjQsMCwwLDAsNjYuMTcsMTM1WiI+PC9wYXRoPjxjaXJjbGUgY2xhc3M9ImNscy0xIiBjeD0iMTM0LjUiIGN5PSIzOC40IiByPSI4Ij48L2NpcmNsZT48Y2lyY2xlIGNsYXNzPSJjbHMtMSIgY3g9IjExNS41IiBjeT0iMTguNCIgcj0iOCI+PC9jaXJjbGU+PGNpcmNsZSBjbGFzcz0iY2xzLTEiIGN4PSIxNDMuNSIgY3k9IjYyLjQiIHI9IjgiPjwvY2lyY2xlPjxjaXJjbGUgY2xhc3M9ImNscy0xIiBjeD0iMTQzLjUiIGN5PSI4Ny40IiByPSI4Ij48L2NpcmNsZT48Y2lyY2xlIGNsYXNzPSJjbHMtMSIgY3g9IjEzMy41IiBjeT0iMTExLjQiIHI9IjgiPjwvY2lyY2xlPjxjaXJjbGUgY2xhc3M9ImNscy0xIiBjeD0iMTE0LjUiIGN5PSIxMzEuNCIgcj0iOCI+PC9jaXJjbGU+PGNpcmNsZSBjbGFzcz0iY2xzLTEiIGN4PSI4OS41IiBjeT0iMTQyLjQiIHI9IjgiPjwvY2lyY2xlPjwvZz48L2c+PC9zdmc+', width: 22, height: 22, alt: '' }),
-        ce('div', { className: 'tc-title' }, 'TETRACHORDS', ce('small', null, 'SD-CONFIG EDITOR'))
+        ce('div', { className: 'tc-title' }, 'TETRACHORDS', ce('small', null, 'SD-CONFIG EDITOR')),
+        ce('span', { className: 'tc-beta', title: 'Beta — under active testing' }, 'BETA')
       ),
       ce('div', { className: 'tc-topbar-spacer' }),
       ce(ConnChip, { conn: props.conn, total: props.total, onConnect: props.onConnect }),
@@ -3399,7 +3452,16 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       ce('div', { className: 'tc-rail-display' },
         ce('span', { className: 'tc-rail-title' }, 'Display'),
         ce(ScaleSlider, { label: 'Text size', value: props.textScale, min: 0.85, max: 1.6, step: 0.05, onChange: props.onTextScale }),
-        ce(ScaleSlider, { label: 'Title size', value: props.titleScale, min: 0.85, max: 1.5, step: 0.05, onChange: props.onTitleScale })
+        ce(ScaleSlider, { label: 'Title size', value: props.titleScale, min: 0.85, max: 1.5, step: 0.05, onChange: props.onTitleScale }),
+        // "Text contrast" lifts the muted greys toward the theme's ink — tuned
+        // independently per theme (separate value + slider), so show only the
+        // active theme's one. Fraction 0–0.6 (read-out 0%–60%).
+        props.dark
+          ? ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftDark, min: 0, max: 0.6, step: 0.05, onChange: props.onGreyLiftDark })
+          : ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftLight, min: 0, max: 0.6, step: 0.05, onChange: props.onGreyLiftLight }),
+        // "Paper" warms the white page toward cream — light only (the dark page
+        // stays #101010). Fraction 0–1.0 (read-out 0%–100%).
+        props.dark ? null : ce(ScaleSlider, { label: 'Paper', value: props.paperWarmth, min: 0, max: 1.0, step: 0.05, onChange: props.onPaperWarmth })
       )
     );
   }
@@ -3556,6 +3618,12 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     st = useState(null); var toast = st[0], setToast = st[1];
     st = useState(function () { return saved.scaleV === SCALE_V ? (saved.textScale || 1) : 1; }); var textScale = st[0], setTextScale = st[1];
     st = useState(function () { return saved.scaleV === SCALE_V ? (saved.titleScale || 1) : 1; }); var titleScale = st[0], setTitleScale = st[1];
+    // Contrast knobs (Display rail). Ungated (no scaleV gate): absent → 0 → page
+    // unchanged, so they survive without a version bump that would reset scale prefs.
+    var savedKnobs = restoreContrastKnobs(saved);
+    st = useState(function () { return savedKnobs.greyLiftLight; }); var greyLiftLight = st[0], setGreyLiftLight = st[1];
+    st = useState(function () { return savedKnobs.greyLiftDark; }); var greyLiftDark = st[0], setGreyLiftDark = st[1];
+    st = useState(function () { return savedKnobs.paperWarmth; }); var paperWarmth = st[0], setPaperWarmth = st[1];
     // #4 — dev mode: opt-in via ?debug=1 or the DEV toggle. Off by default.
     st = useState(function () { return /[?&]debug=1\b/.test(typeof location !== 'undefined' ? location.search : ''); }); var dev = st[0], setDev = st[1];
     st = useState([]); var devEntries = st[0], setDevEntries = st[1];         // bounded comms log for the dev panel
@@ -3617,8 +3685,11 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
     // persist as a draft cache (the card is the source of truth once connected)
     useEffect(function () {
-      localStorage.setItem(STORE, JSON.stringify({ committed: committed, values: values, textScale: textScale, titleScale: titleScale, scaleV: SCALE_V }));
-    }, [committed, values, textScale, titleScale]);
+      localStorage.setItem(STORE, JSON.stringify(buildStoreState({
+        committed: committed, values: values, textScale: textScale, titleScale: titleScale,
+        greyLiftLight: greyLiftLight, greyLiftDark: greyLiftDark, paperWarmth: paperWarmth,
+      })));
+    }, [committed, values, textScale, titleScale, greyLiftLight, greyLiftDark, paperWarmth]);
 
     var fieldKeys = useMemo(function () { return allKeys(sections); }, [sections]);
     var dirtyKeys = fieldKeys.filter(function (k) { return values[k] !== committed[k]; });
@@ -3870,6 +3941,23 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       }
     }, [dark]);
 
+    // Contrast knobs → CSS. Set on <html> (= :root) so the :root / .theme-dark
+    // token derivations AND the page <body> background all resolve them (none are
+    // descendants of .tc-app, where --text-scale lives). Vars stay unitless — the
+    // slider fraction × 100 — so the CSS reads them as `calc(var(--x) * 1%)`.
+    useEffect(function () {
+      if (typeof document !== 'undefined' && document.documentElement) {
+        var s = document.documentElement.style;
+        // Push the fraction as an integer percent (the read-out rounds the same way).
+        // String form is the CSSOM-conformant value type; 0 → "0" (never clears the
+        // property), so the page stays inert at the default.
+        var pct = function (frac) { return String(Math.round(frac * 100)); };
+        s.setProperty('--grey-lift-light', pct(greyLiftLight));
+        s.setProperty('--grey-lift-dark', pct(greyLiftDark));
+        s.setProperty('--paper-warmth', pct(paperWarmth));
+      }
+    }, [greyLiftLight, greyLiftDark, paperWarmth]);
+
     // ── Scala flows ──────────────────────────────────────────────
     function refreshScala() {
       if (conn !== 'live') return Promise.resolve();
@@ -3972,6 +4060,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
             sections: sections, values: values, committed: committed, scalaCount: scalaCount, active: active, onJump: jump,
             onExpandAll: expandAll, onCollapseAll: collapseAll, hasReadonly: hasReadonly, readonlyCount: readonly.length,
             textScale: textScale, titleScale: titleScale, onTextScale: setTextScale, onTitleScale: setTitleScale,
+            dark: dark, greyLiftLight: greyLiftLight, greyLiftDark: greyLiftDark, paperWarmth: paperWarmth,
+            onGreyLiftLight: setGreyLiftLight, onGreyLiftDark: setGreyLiftDark, onPaperWarmth: setPaperWarmth,
           }),
           ce('div', { className: 'tc-panels' + (busy ? ' busy' : '') },
             ce(ConnectBanner, {
