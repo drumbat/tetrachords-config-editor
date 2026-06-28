@@ -382,14 +382,15 @@ body {
    ===================================================================== */
 
 :root {
-  /* Display-rail contrast knobs. Set on <html> at runtime (editor-app.jsx); the
-     defaults below keep the page exactly as it was. Values are UNITLESS (a slider
-     fraction × 100); the derivations read them as `calc(var(--x) * 1%)`. Defined
-     here at :root so the token derivations AND the page <body> background resolve
-     them — none of those are descendants of .tc-app, where --text-scale lives. */
-  --paper-warmth:    0;   /* 0 = pure-white page → 100 = cream #FBF8ED (light only) */
-  --grey-lift-light: 0;   /* 0 = base greys → 100 = greys fully lifted toward --w-ink */
-  --grey-lift-dark:  0;   /* dark-mode counterpart (declared here so it's always set) */
+  /* Display-rail contrast knobs. Set on <html> at runtime by editor-app.jsx; the
+     values below are the SHIPPED DEFAULTS — keep them in sync with CONTRAST_DEFAULTS
+     in editor-app.jsx so the first paint matches before React's effect runs (no
+     flash). UNITLESS (a slider fraction × 100); the derivations read them as
+     `calc(var(--x) * 1%)`. Defined here at :root so the token derivations AND the
+     page <body> background resolve them — none are descendants of .tc-app. */
+  --paper-warmth:    25;   /* 0 = pure-white page → 100 = cream #FBF8ED (light only) */
+  --grey-lift-light: 60;   /* 0 = base greys → 100 = greys fully lifted to --w-ink (primary) */
+  --grey-lift-dark:  60;   /* dark-mode counterpart (declared here so it's always set) */
 
   --w-bg:        color-mix(in srgb, #ffffff, #FBF8ED calc(var(--paper-warmth) * 1%));
   --w-ink:       #111111;   /* primary text / lines */
@@ -3071,7 +3072,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   // The persisted draft cache (STORE) shape — pure so host tests can pin the
   // contract: every field the app restores on load must be written here. scaleV
   // gates ONLY text/title scale (a bump resets those); the contrast knobs
-  // (greyLift*/paperWarmth) are ungated (absent → 0), so they must never drop out.
+  // (greyLift*/paperWarmth) are ungated (absent → shipped default), so they must never drop out.
   function buildStoreState(s) {
     return {
       committed: s.committed, values: s.values,
@@ -3080,16 +3081,24 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     };
   }
 
+  // Shipped defaults for the Display-rail contrast knobs (fractions). KEEP IN SYNC
+  // with the --paper-warmth / --grey-lift-* defaults in editor.css :root, which
+  // cover the first paint before the React effect runs.
+  var CONTRAST_DEFAULTS = { greyLiftLight: 0.6, greyLiftDark: 0.6, paperWarmth: 0.25 };
+
   // Load-side counterpart to buildStoreState: restore the contrast knobs from a
-  // parsed STORE. UNGATED by scaleV (unlike text/title scale) — absent → 0 (page
-  // unchanged), present → restored — so a scaleV bump never resets them. Pure, for
+  // parsed STORE. UNGATED by scaleV (unlike text/title scale), so a scaleV bump
+  // never resets them. Absent key → the shipped default; a present value is used
+  // verbatim — including an explicit 0, so absence is tested with `== null` (not
+  // `||`), letting a user who dials a knob to 0 keep it across reload. Pure, for
   // host tests.
   function restoreContrastKnobs(saved) {
     saved = saved || {};
+    var pick = function (v, dflt) { return v == null ? dflt : v; };
     return {
-      greyLiftLight: saved.greyLiftLight || 0,
-      greyLiftDark: saved.greyLiftDark || 0,
-      paperWarmth: saved.paperWarmth || 0,
+      greyLiftLight: pick(saved.greyLiftLight, CONTRAST_DEFAULTS.greyLiftLight),
+      greyLiftDark: pick(saved.greyLiftDark, CONTRAST_DEFAULTS.greyLiftDark),
+      paperWarmth: pick(saved.paperWarmth, CONTRAST_DEFAULTS.paperWarmth),
     };
   }
 
@@ -3455,10 +3464,10 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
         ce(ScaleSlider, { label: 'Title size', value: props.titleScale, min: 0.85, max: 1.5, step: 0.05, onChange: props.onTitleScale }),
         // "Text contrast" lifts the muted greys toward the theme's ink — tuned
         // independently per theme (separate value + slider), so show only the
-        // active theme's one. Fraction 0–0.6 (read-out 0%–60%).
+        // active theme's one. Fraction 0–1.0 (read-out 0%–100%; 100% = greys at primary ink).
         props.dark
-          ? ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftDark, min: 0, max: 0.6, step: 0.05, onChange: props.onGreyLiftDark })
-          : ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftLight, min: 0, max: 0.6, step: 0.05, onChange: props.onGreyLiftLight }),
+          ? ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftDark, min: 0, max: 1.0, step: 0.05, onChange: props.onGreyLiftDark })
+          : ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftLight, min: 0, max: 1.0, step: 0.05, onChange: props.onGreyLiftLight }),
         // "Paper" warms the white page toward cream — light only (the dark page
         // stays #101010). Fraction 0–1.0 (read-out 0%–100%).
         props.dark ? null : ce(ScaleSlider, { label: 'Paper', value: props.paperWarmth, min: 0, max: 1.0, step: 0.05, onChange: props.onPaperWarmth })
@@ -3618,8 +3627,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     st = useState(null); var toast = st[0], setToast = st[1];
     st = useState(function () { return saved.scaleV === SCALE_V ? (saved.textScale || 1) : 1; }); var textScale = st[0], setTextScale = st[1];
     st = useState(function () { return saved.scaleV === SCALE_V ? (saved.titleScale || 1) : 1; }); var titleScale = st[0], setTitleScale = st[1];
-    // Contrast knobs (Display rail). Ungated (no scaleV gate): absent → 0 → page
-    // unchanged, so they survive without a version bump that would reset scale prefs.
+    // Contrast knobs (Display rail). Ungated (no scaleV gate) — restored via
+    // restoreContrastKnobs (absent → shipped default; an explicit value, incl. 0, is kept).
     var savedKnobs = restoreContrastKnobs(saved);
     st = useState(function () { return savedKnobs.greyLiftLight; }); var greyLiftLight = st[0], setGreyLiftLight = st[1];
     st = useState(function () { return savedKnobs.greyLiftDark; }); var greyLiftDark = st[0], setGreyLiftDark = st[1];
