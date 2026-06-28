@@ -382,23 +382,25 @@ body {
    ===================================================================== */
 
 :root {
-  /* Display-rail contrast knobs. Set on <html> at runtime by editor-app.jsx; the
-     values below are the SHIPPED DEFAULTS — keep them in sync with CONTRAST_DEFAULTS
+  /* Display-rail appearance knobs. Set on <html> at runtime by editor-app.jsx; the
+     values below are the SHIPPED DEFAULTS — keep them in sync with DISPLAY_DEFAULTS
      in editor-app.jsx so the first paint matches before React's effect runs (no
      flash). UNITLESS (a slider fraction × 100); the derivations read them as
      `calc(var(--x) * 1%)`. Defined here at :root so the token derivations AND the
      page <body> background resolve them — none are descendants of .tc-app. */
-  --paper-warmth:    25;   /* 0 = pure-white page → 100 = cream #FBF8ED (light only) */
-  --grey-lift-light: 60;   /* 0 = base greys → 100 = greys fully lifted to --w-ink (primary) */
-  --grey-lift-dark:  60;   /* dark-mode counterpart (declared here so it's always set) */
+  --paper-warmth:    15;    /* 0 = pure-white page → 100 = cream #FBF8ED (light only) */
+  --grey-lift-light: 100;   /* 0 = base greys → 100 = greys fully lifted to --w-ink (primary) */
+  --grey-lift-dark:  100;   /* dark-mode counterpart (declared here so it's always set) */
+  --border-strength: 100;   /* 100 = full ink box-lines/dividers + control borders → 0 = faded into the bg */
 
   --w-bg:        color-mix(in srgb, #ffffff, #FBF8ED calc(var(--paper-warmth) * 1%));
-  --w-ink:       #111111;   /* primary text / lines */
+  --w-ink:       #111111;   /* primary text (NOT modulated by the knobs) */
   --w-ink-2-base: #6b6b6b;  /* secondary — base before grey-lift */
   --w-ink-3-base: #9a9a9a;  /* tertiary  — base before grey-lift */
   --w-ink-2:     color-mix(in srgb, var(--w-ink-2-base), var(--w-ink) calc(var(--grey-lift-light) * 1%));   /* secondary */
   --w-ink-3:     color-mix(in srgb, var(--w-ink-3-base), var(--w-ink) calc(var(--grey-lift-light) * 1%));   /* tertiary */
-  --w-line:      #111111;   /* structural box lines (squares) */
+  --w-line-base: #111111;   /* base before border-strength */
+  --w-line:      color-mix(in srgb, var(--w-bg), var(--w-line-base) calc(var(--border-strength) * 1%));   /* box lines/dividers + control borders; fade toward the (paper-warmed) bg */
   --w-hair:      #e6e4df;   /* light row dividers */
   --w-rail-bg:   color-mix(in srgb, #fafafa, #FBF8ED calc(var(--paper-warmth) * 1%));   /* warms with the page, stays a touch darker than it */
   --w-track-1:   #c9b200;   /* slightly darkened LEDs so they read on white */
@@ -540,7 +542,7 @@ body {
 /* controls — white field, ink hairline, square */
 .tc-input, .tc-select {
   background: var(--w-bg); color: var(--w-ink);
-  border: 1px solid var(--w-ink); border-radius: 0;
+  border: 1px solid var(--w-line); border-radius: 0;   /* control border tracks the Borders slider (--w-line); focus/dirty rings stay --w-ink */
   font-family: var(--ci-font-mono); font-size: calc(12.5px * var(--text-scale));
   transition: box-shadow var(--ci-dur-fast) var(--ci-ease);
 }
@@ -635,6 +637,11 @@ body {
   display: flex; flex-direction: column; gap: 12px;
   padding: 12px; border-top: 1px solid var(--w-line);
 }
+/* collapsible header for the Display sliders (chevron toggles them away) */
+.tc-rail-display-head { display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.tc-rail-display-head .tc-rail-title { flex: 1; }
+.tc-rail-display-head .tc-chev { margin-left: auto; }
+.tc-rail-display.collapsed .tc-chev { transform: rotate(-90deg); }
 .tc-scale { display: flex; flex-direction: column; gap: 6px; cursor: pointer; }
 .tc-scale-top { display: flex; align-items: baseline; justify-content: space-between; }
 .tc-scale-label {
@@ -669,7 +676,7 @@ body {
   .tc-rail-list a { flex: 1 1 auto; border-bottom: 1px solid var(--w-hair); }
   .tc-rail a.active::before { width: 100%; height: 3px; top: auto; bottom: 0; }
   .tc-rail-display { flex-direction: row; flex-wrap: wrap; gap: 18px; }
-  .tc-rail-display .tc-rail-title { flex: 1 0 100%; }
+  .tc-rail-display-head { flex: 1 0 100%; }
   .tc-rail-display .tc-scale { flex: 1 1 160px; }
   .tc-panels { max-width: none; }
 }
@@ -1049,7 +1056,8 @@ body.theme-dark { background: #101010; }
   --w-ink-3-base: #7f7d77;
   --w-ink-2:   color-mix(in srgb, var(--w-ink-2-base), var(--w-ink) calc(var(--grey-lift-dark) * 1%));
   --w-ink-3:   color-mix(in srgb, var(--w-ink-3-base), var(--w-ink) calc(var(--grey-lift-dark) * 1%));
-  --w-line:    #ECEAE4;   /* structural box lines flip to light */
+  --w-line-base: #ECEAE4;   /* structural box lines flip to light; base before border-strength */
+  --w-line:    color-mix(in srgb, var(--w-bg), var(--w-line-base) calc(var(--border-strength) * 1%));   /* fade toward the dark bg (#101010) */
   --w-hair:    #2a2a2a;   /* row dividers */
   --w-rail-bg: #1b1b1b;
   --w-track-1: #ffe14d;   /* brighter LEDs for a dark bg (light values were darkened to read on white) */
@@ -2939,7 +2947,12 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   // comfortable default, rebased to read as "100%". SCALE_BASE multiplies the
   // slider value before it hits CSS; default slider position is 1.0.
   var SCALE_BASE = 1.05;
-  var SCALE_V = 2;
+  // Bump DISPLAY_V whenever the shipped Display defaults change: a STORE with an older
+  // (or absent) displayV is treated as stale and reset to the new defaults, so updated
+  // defaults reach existing browsers instead of being masked by localStorage. Within a
+  // version, a user's manual slider tweaks still persist. (Renamed from scaleV — old
+  // saves lack displayV, so they cleanly adopt the current defaults on first load.)
+  var DISPLAY_V = 1;
 
   // #4 — dev-mode comms log: a static version string for the export header, and
   // a hard cap on the buffer so a long session can't grow without bound.
@@ -3004,7 +3017,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     persistThemeDark: persistThemeDark, themeClass: themeClass,
     buildSections: buildSections,   // pure schema -> sections (hidden keys filtered); exposed for host tests
     buildStoreState: buildStoreState,   // pure persisted-draft (STORE) shape; exposed for host tests
-    restoreContrastKnobs: restoreContrastKnobs,   // pure STORE -> contrast knobs (ungated); exposed for host tests
+    restoreDisplayKnobs: restoreDisplayKnobs,   // pure STORE -> appearance knobs (displayV-gated); exposed for host tests
   };
 
   // ─── schema → sections (sim seed or live LIST_KEYS records) ─────
@@ -3070,35 +3083,38 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   function loadStore() { try { return JSON.parse(localStorage.getItem(STORE) || 'null') || {}; } catch (e) { return {}; } }
 
   // The persisted draft cache (STORE) shape — pure so host tests can pin the
-  // contract: every field the app restores on load must be written here. scaleV
-  // gates ONLY text/title scale (a bump resets those); the contrast knobs
-  // (greyLift*/paperWarmth) are ungated (absent → shipped default), so they must never drop out.
+  // contract: every field the app restores on load must be written here. displayV
+  // versions the shipped Display defaults: a stale/absent displayV resets ALL the
+  // Display prefs (text/title scale + the appearance knobs) to the current defaults.
   function buildStoreState(s) {
     return {
       committed: s.committed, values: s.values,
-      textScale: s.textScale, titleScale: s.titleScale, scaleV: SCALE_V,
+      textScale: s.textScale, titleScale: s.titleScale, displayV: DISPLAY_V,
       greyLiftLight: s.greyLiftLight, greyLiftDark: s.greyLiftDark, paperWarmth: s.paperWarmth,
+      borderStrength: s.borderStrength, displayOpen: s.displayOpen,
     };
   }
 
-  // Shipped defaults for the Display-rail contrast knobs (fractions). KEEP IN SYNC
-  // with the --paper-warmth / --grey-lift-* defaults in editor.css :root, which
-  // cover the first paint before the React effect runs.
-  var CONTRAST_DEFAULTS = { greyLiftLight: 0.6, greyLiftDark: 0.6, paperWarmth: 0.25 };
+  // Shipped defaults for the Display-rail appearance knobs (fractions). KEEP IN SYNC
+  // with the --paper-warmth / --grey-lift-* / --border-strength defaults in editor.css
+  // :root, which cover the first paint before the React effect runs.
+  var DISPLAY_DEFAULTS = { greyLiftLight: 1.0, greyLiftDark: 1.0, paperWarmth: 0.15, borderStrength: 1.0 };
 
-  // Load-side counterpart to buildStoreState: restore the contrast knobs from a
-  // parsed STORE. UNGATED by scaleV (unlike text/title scale), so a scaleV bump
-  // never resets them. Absent key → the shipped default; a present value is used
-  // verbatim — including an explicit 0, so absence is tested with `== null` (not
-  // `||`), letting a user who dials a knob to 0 keep it across reload. Pure, for
-  // host tests.
-  function restoreContrastKnobs(saved) {
+  // Load-side counterpart to buildStoreState: restore the appearance knobs from a
+  // parsed STORE. Gated by displayV — a stale/absent version means the shipped
+  // defaults changed (or there's no save yet), so return defaults and let the new look
+  // reach the browser. Within the current version a present value is used verbatim —
+  // including an explicit 0 (absence tested with `== null`, not `||`), so a user who
+  // dials a knob to 0 keeps it across reload. Pure, for host tests.
+  function restoreDisplayKnobs(saved) {
     saved = saved || {};
-    var pick = function (v, dflt) { return v == null ? dflt : v; };
+    var stale = saved.displayV !== DISPLAY_V;
+    var pick = function (v, dflt) { return (stale || v == null) ? dflt : v; };
     return {
-      greyLiftLight: pick(saved.greyLiftLight, CONTRAST_DEFAULTS.greyLiftLight),
-      greyLiftDark: pick(saved.greyLiftDark, CONTRAST_DEFAULTS.greyLiftDark),
-      paperWarmth: pick(saved.paperWarmth, CONTRAST_DEFAULTS.paperWarmth),
+      greyLiftLight: pick(saved.greyLiftLight, DISPLAY_DEFAULTS.greyLiftLight),
+      greyLiftDark: pick(saved.greyLiftDark, DISPLAY_DEFAULTS.greyLiftDark),
+      paperWarmth: pick(saved.paperWarmth, DISPLAY_DEFAULTS.paperWarmth),
+      borderStrength: pick(saved.borderStrength, DISPLAY_DEFAULTS.borderStrength),
     };
   }
 
@@ -3458,19 +3474,28 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
         ce('a', { className: (props.active === 'scala' ? ' active' : ''), onClick: function () { props.onJump('scala'); } },
           ce('span', { className: 'dot' }), 'SCALA FILES', ce('span', { className: 'ct' }, props.scalaCount))
       ),
-      ce('div', { className: 'tc-rail-display' },
-        ce('span', { className: 'tc-rail-title' }, 'Display'),
-        ce(ScaleSlider, { label: 'Text size', value: props.textScale, min: 0.85, max: 1.6, step: 0.05, onChange: props.onTextScale }),
-        ce(ScaleSlider, { label: 'Title size', value: props.titleScale, min: 0.85, max: 1.5, step: 0.05, onChange: props.onTitleScale }),
-        // "Text contrast" lifts the muted greys toward the theme's ink — tuned
-        // independently per theme (separate value + slider), so show only the
-        // active theme's one. Fraction 0–1.0 (read-out 0%–100%; 100% = greys at primary ink).
-        props.dark
-          ? ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftDark, min: 0, max: 1.0, step: 0.05, onChange: props.onGreyLiftDark })
-          : ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftLight, min: 0, max: 1.0, step: 0.05, onChange: props.onGreyLiftLight }),
-        // "Paper" warms the white page toward cream — light only (the dark page
-        // stays #101010). Fraction 0–1.0 (read-out 0%–100%).
-        props.dark ? null : ce(ScaleSlider, { label: 'Paper', value: props.paperWarmth, min: 0, max: 1.0, step: 0.05, onChange: props.onPaperWarmth })
+      ce('div', { className: 'tc-rail-display' + (props.displayOpen ? '' : ' collapsed') },
+        ce('div', { className: 'tc-rail-display-head', onClick: props.onToggleDisplay,
+            title: props.displayOpen ? 'Hide the display sliders' : 'Show the display sliders' },
+          ce('span', { className: 'tc-rail-title' }, 'Display'),
+          ce('span', { className: 'tc-chev' }, '▾')),
+        props.displayOpen ? ce(R.Fragment, null,
+          ce(ScaleSlider, { label: 'Text size', value: props.textScale, min: 0.85, max: 1.6, step: 0.05, onChange: props.onTextScale }),
+          ce(ScaleSlider, { label: 'Title size', value: props.titleScale, min: 0.85, max: 1.5, step: 0.05, onChange: props.onTitleScale }),
+          // "Text contrast" lifts the muted greys toward the theme's ink — tuned
+          // independently per theme (separate value + slider), so show only the
+          // active theme's one. Fraction 0–1.0 (read-out 0%–100%; 100% = greys at primary ink).
+          props.dark
+            ? ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftDark, min: 0, max: 1.0, step: 0.05, onChange: props.onGreyLiftDark })
+            : ce(ScaleSlider, { label: 'Text contrast', value: props.greyLiftLight, min: 0, max: 1.0, step: 0.05, onChange: props.onGreyLiftLight }),
+          // "Paper" warms the white page toward cream — light only (the dark page
+          // stays #101010). Fraction 0–1.0 (read-out 0%–100%).
+          props.dark ? null : ce(ScaleSlider, { label: 'Paper', value: props.paperWarmth, min: 0, max: 1.0, step: 0.05, onChange: props.onPaperWarmth }),
+          // "Borders" fades the structural box-lines/dividers + select/input boxes toward
+          // the bg (100% = full ink, 0% = invisible). Shared across themes; buttons keep
+          // their own full outline. Fraction 0–1.0 (read-out 0%–100%).
+          ce(ScaleSlider, { label: 'Borders', value: props.borderStrength, min: 0, max: 1.0, step: 0.05, onChange: props.onBorderStrength })
+        ) : null
       )
     );
   }
@@ -3625,14 +3650,17 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     st = useState(function () { return defaultOpen(SIM_SECTIONS); }); var open = st[0], setOpen = st[1];
     st = useState(SIM_SECTIONS[0].id); var active = st[0], setActive = st[1];
     st = useState(null); var toast = st[0], setToast = st[1];
-    st = useState(function () { return saved.scaleV === SCALE_V ? (saved.textScale || 1) : 1; }); var textScale = st[0], setTextScale = st[1];
-    st = useState(function () { return saved.scaleV === SCALE_V ? (saved.titleScale || 1) : 1; }); var titleScale = st[0], setTitleScale = st[1];
-    // Contrast knobs (Display rail). Ungated (no scaleV gate) — restored via
-    // restoreContrastKnobs (absent → shipped default; an explicit value, incl. 0, is kept).
-    var savedKnobs = restoreContrastKnobs(saved);
+    st = useState(function () { return saved.displayV === DISPLAY_V ? (saved.textScale || 1.05) : 1.05; }); var textScale = st[0], setTextScale = st[1];
+    st = useState(function () { return saved.displayV === DISPLAY_V ? (saved.titleScale || 1.05) : 1.05; }); var titleScale = st[0], setTitleScale = st[1];
+    // Appearance knobs (Display rail) — restored via restoreDisplayKnobs (gated by
+    // displayV; within a version an explicit value, incl. 0, is kept).
+    var savedKnobs = restoreDisplayKnobs(saved);
     st = useState(function () { return savedKnobs.greyLiftLight; }); var greyLiftLight = st[0], setGreyLiftLight = st[1];
     st = useState(function () { return savedKnobs.greyLiftDark; }); var greyLiftDark = st[0], setGreyLiftDark = st[1];
     st = useState(function () { return savedKnobs.paperWarmth; }); var paperWarmth = st[0], setPaperWarmth = st[1];
+    st = useState(function () { return savedKnobs.borderStrength; }); var borderStrength = st[0], setBorderStrength = st[1];
+    // Display-rail collapse toggle (ungated; persisted, default open).
+    st = useState(function () { return saved.displayOpen !== false; }); var displayOpen = st[0], setDisplayOpen = st[1];
     // #4 — dev mode: opt-in via ?debug=1 or the DEV toggle. Off by default.
     st = useState(function () { return /[?&]debug=1\b/.test(typeof location !== 'undefined' ? location.search : ''); }); var dev = st[0], setDev = st[1];
     st = useState([]); var devEntries = st[0], setDevEntries = st[1];         // bounded comms log for the dev panel
@@ -3697,8 +3725,9 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       localStorage.setItem(STORE, JSON.stringify(buildStoreState({
         committed: committed, values: values, textScale: textScale, titleScale: titleScale,
         greyLiftLight: greyLiftLight, greyLiftDark: greyLiftDark, paperWarmth: paperWarmth,
+        borderStrength: borderStrength, displayOpen: displayOpen,
       })));
-    }, [committed, values, textScale, titleScale, greyLiftLight, greyLiftDark, paperWarmth]);
+    }, [committed, values, textScale, titleScale, greyLiftLight, greyLiftDark, paperWarmth, borderStrength, displayOpen]);
 
     var fieldKeys = useMemo(function () { return allKeys(sections); }, [sections]);
     var dirtyKeys = fieldKeys.filter(function (k) { return values[k] !== committed[k]; });
@@ -3950,7 +3979,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       }
     }, [dark]);
 
-    // Contrast knobs → CSS. Set on <html> (= :root) so the :root / .theme-dark
+    // Appearance knobs → CSS. Set on <html> (= :root) so the :root / .theme-dark
     // token derivations AND the page <body> background all resolve them (none are
     // descendants of .tc-app, where --text-scale lives). Vars stay unitless — the
     // slider fraction × 100 — so the CSS reads them as `calc(var(--x) * 1%)`.
@@ -3964,8 +3993,9 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
         s.setProperty('--grey-lift-light', pct(greyLiftLight));
         s.setProperty('--grey-lift-dark', pct(greyLiftDark));
         s.setProperty('--paper-warmth', pct(paperWarmth));
+        s.setProperty('--border-strength', pct(borderStrength));
       }
-    }, [greyLiftLight, greyLiftDark, paperWarmth]);
+    }, [greyLiftLight, greyLiftDark, paperWarmth, borderStrength]);
 
     // ── Scala flows ──────────────────────────────────────────────
     function refreshScala() {
@@ -4071,6 +4101,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
             textScale: textScale, titleScale: titleScale, onTextScale: setTextScale, onTitleScale: setTitleScale,
             dark: dark, greyLiftLight: greyLiftLight, greyLiftDark: greyLiftDark, paperWarmth: paperWarmth,
             onGreyLiftLight: setGreyLiftLight, onGreyLiftDark: setGreyLiftDark, onPaperWarmth: setPaperWarmth,
+            borderStrength: borderStrength, onBorderStrength: setBorderStrength,
+            displayOpen: displayOpen, onToggleDisplay: function () { setDisplayOpen(function (o) { return !o; }); },
           }),
           ce('div', { className: 'tc-panels' + (busy ? ' busy' : '') },
             ce(ConnectBanner, {
