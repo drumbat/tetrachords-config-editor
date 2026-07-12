@@ -2421,8 +2421,11 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   // (['ON','OFF']) for any PC key whose true firmware default is OFF (all PC
   // TX enables + MIDI_PC_ELEKTRON_SYNC + MIDI_PC_B_RX; owner-confirmed
   // 2026-07-04, fully opt-in PC-out).
+  // WATCHDOG (flight-recorder slice 5) is also firmware-default OFF — an offline-composed
+  // card must never enable the IWDG by fallback ordering.
   var OFF_ON = ['OFF', 'ON'];
   var EXPLICIT = {
+    WATCHDOG: OFF_ON,
     RESPOND_TO_MIDI_CC: BOOL4,
     CV_VELOCITY_MODE: ['CV_VELOCITY_CONTINUOUS', 'CV_VELOCITY_GATE'],
     MIDI_OMNI_MODE: ['BASIC', 'ADVANCED'],
@@ -2624,13 +2627,26 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   //     NOT redacted from the dev log — they're under active development, so seeing
   //     them in traffic is useful. Add/remove names here as features ship.
   var REDACTED_KEYS = ['MIDI_CLOCK_OUT'];
-  var EDITOR_HIDDEN_KEYS = [
+  // Not-ready feature keys — firmware exists, UI doesn't yet (I2C track auto-connect,
+  // ER-301 CCs, Just Friends CV, disting ES5).
+  var EDITOR_NOT_READY_KEYS = [
     'I2C_TRACK_1_AUTO_CONNECT_A', 'I2C_TRACK_2_AUTO_CONNECT_A', 'I2C_TRACK_3_AUTO_CONNECT_A', 'I2C_TRACK_4_AUTO_CONNECT_A',
     'ER_301_CH_1_MIDI_CC', 'ER_301_CH_2_MIDI_CC', 'ER_301_CH_3_MIDI_CC', 'ER_301_CH_4_MIDI_CC',
     'JUST_FRIENDS_CV_1', 'JUST_FRIENDS_CV_2', 'JUST_FRIENDS_CV_3', 'JUST_FRIENDS_CV_4', 'JUST_FRIENDS_CV_5', 'JUST_FRIENDS_CV_6',
     'I2C_DISTING_ES5_CONN',
-    // Retired keys — real firmware keys the editor no longer surfaces (tools / beta / inert features).
-    // Hidden everywhere AND never written by the composer; preserved verbatim if already on the card.
+  ];
+  // Dev-only kill-switch keys — registered + governed by docs/maintenance/kill-switch-register.md.
+  // Hidden from the public editor but exposed on the (unpublished) dev-keys.html page — see
+  // tools/config-editor-web/dev-keys.html / dev-keys-app.js. Add/remove names here (and in the
+  // register) as kill switches are registered or retired.
+  var EDITOR_DEV_KILL_SWITCH_KEYS = [
+    // STICKY_TRACK_MODES (F7, dev-only kill-switch — docs/maintenance/kill-switch-register.md):
+    // in-development per-track sticky mode gate, not ready for public exposure yet.
+    'STICKY_TRACK_MODES',
+  ];
+  // Retired keys — real firmware keys the editor no longer surfaces (tools / beta / inert features).
+  // Hidden everywhere AND never written by the composer; preserved verbatim if already on the card.
+  var EDITOR_RETIRED_KEYS = [
     'AUTO_SAVE',
     'TRACK_1_TRIGLESS_TRIGGER', 'TRACK_2_TRIGLESS_TRIGGER', 'TRACK_3_TRIGLESS_TRIGGER', 'TRACK_4_TRIGLESS_TRIGGER',
     'TRIGGER_TRACKS_ON_PATTERN_CHANGE',
@@ -2640,6 +2656,11 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     'I2C_1_CONNECT', 'I2C_2_CONNECT', 'I2C_3_CONNECT', 'I2C_4_CONNECT',
     'I2C_5_CONNECT', 'I2C_6_CONNECT', 'I2C_7_CONNECT', 'I2C_8_CONNECT',
   ];
+  // EDITOR_HIDDEN_KEYS — real firmware keys for features that aren't available to users
+  // *yet* (not-ready), plus dev-only kill switches, plus retired keys. Hidden from the
+  // editor (no field, raw viewer, or read-only row) but NOT redacted from the dev log —
+  // they're under active development, so seeing them in traffic is useful.
+  var EDITOR_HIDDEN_KEYS = EDITOR_NOT_READY_KEYS.concat(EDITOR_DEV_KILL_SWITCH_KEYS, EDITOR_RETIRED_KEYS);
   // Union — every key the editor must never surface as an editable/visible field.
   var HIDDEN_KEYS = REDACTED_KEYS.concat(EDITOR_HIDDEN_KEYS);
   function isHiddenKey(key) {
@@ -2888,11 +2909,13 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   };
 
   // List currently-available ports (for a manual picker when auto-detect fails).
+  // Carries state/connection too (additive) — the wizard's connection troubleshooter
+  // shows them so the operator can see a present-but-closed or disconnected port.
   Client.prototype.getPorts = function () {
     var ins = [], outs = [];
     if (this.access) {
-      this.access.inputs.forEach(function (p) { ins.push({ id: p.id, name: p.name, manufacturer: p.manufacturer }); });
-      this.access.outputs.forEach(function (p) { outs.push({ id: p.id, name: p.name, manufacturer: p.manufacturer }); });
+      this.access.inputs.forEach(function (p) { ins.push({ id: p.id, name: p.name, manufacturer: p.manufacturer, state: p.state, connection: p.connection }); });
+      this.access.outputs.forEach(function (p) { outs.push({ id: p.id, name: p.name, manufacturer: p.manufacturer, state: p.state, connection: p.connection }); });
     }
     return { inputs: ins, outputs: outs };
   };
@@ -3045,9 +3068,42 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
   Client.prototype.disconnect = function () { this._teardown('Disconnected by user.'); };
 
+  // Send a raw channel-voice message (e.g. a Program Change stimulus) OUTSIDE the serial
+  // SysEx request/response queue — no reply is expected. The wizard sequences its own sends,
+  // so this deliberately bypasses the queue and never races an in-flight SysEx job. Guarded
+  // by isConnected(); returns true if it was sent, false if there was no bound output.
+  Client.prototype.sendChannelMessage = function (bytes) {
+    var sent = false;
+    if (this.isConnected()) {
+      this.output.send(bytes);
+      sent = true;
+    }
+    return sent;
+  };
+
   // ─── SysEx reassembly + dispatch ────────────────────────────────
   Client.prototype._onMessage = function (e) {
     var data = e.data, i, b;
+    // Channel-voice-message seam (additive; the sign-off wizard's TX-echo capture).
+    // Web-MIDI delivers each non-SysEx channel message as its OWN event carrying a
+    // COMPLETE message in e.data. Per the MIDI spec a channel status byte
+    // (0x80..0xEF) can NEVER occur inside a SysEx frame body — only data bytes and
+    // realtime bytes may appear between F0 and F7 — so if one arrives while a
+    // partial frame is buffering, that frame is dead and will never complete:
+    // ABORT the partial frame (discard _rx) and deliver the channel message to the
+    // optional onChannelMessage handler. Realtime bytes (0xF8..0xFF) and the F0/F7
+    // paths are deliberately unchanged. The handler is guarded so a listener slip
+    // can never break the transport.
+    if (data && data.length && data[0] >= 0x80 && data[0] <= 0xEF) {
+      if (this._rx) {
+        this._rx = null;   // abort the doomed partial SysEx frame (spec: it can never complete)
+        this._traceEvent('aborted partial SysEx frame (channel status byte arrived mid-frame)');
+      }
+      if (this.h.onChannelMessage) {
+        try { this.h.onChannelMessage(data, e.timeStamp); } catch (ex) { /* never disturb the transport */ }
+      }
+      return;
+    }
     for (i = 0; i < data.length; i++) {
       b = data[i];
       if (b === SYSEX.START) {
@@ -3174,6 +3230,46 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
   // ─── high-level config API (all return Promises) ────────────────
   function statusError(label, code) { return tcError('STATUS', label + ': ' + errMsg(code), { status: code }); }
+
+  // ─── probeMode() — classify which mode the device is in (additive) ──────
+  // The firmware's USB SysEx dispatcher is live in NORMAL RUN MODE too
+  // (sysex_debugger.c): the UX command family shares our envelope
+  // F0 77 01 41 [subcommand], with live run-mode subcommands 0x01-0x10. A config
+  // opcode (0x11-0x1A) arriving in run mode falls to the UX switch default,
+  // which SENDS a short error response [F0 77 01 41 <echoed op> <status> … F7]
+  // (send_ux_error_response, sysex_debugger.c:1095-1098) — so a LIST_KEYS probe
+  // in run mode does NOT time out; it gets a matching-op frame that is not a
+  // key-list page. That error reply is a POSITIVE run-mode signature (and the
+  // probe is side-effect-free: 0x11-0x1A collides with no live subcommand).
+  // Classification of one LIST_KEYS(start=0) request:
+  //   • the response parses as a valid key-list page          -> { mode:'edit', page }
+  //   • a frame arrives on the op byte but is NOT a key list  -> { mode:'run' }
+  //   • timeout (nothing answered — e.g. still booting)       -> { mode:'noresponse' }
+  // A misparse can never throw out of the promise — it classifies as 'run'.
+  // Other transport errors (disconnect, send failure) still reject.
+  Client.prototype.probeMode = function (opts) {
+    return this.sendAndAwait(reqListKeys(0), OP.LIST_KEYS, opts).then(function (d) {
+      var page = null;
+      try {
+        var r = parseListKeys(d);
+        var valid = r && r.error == null &&
+          typeof r.total === 'number' && r.total >= 0 &&
+          r.chunkStart === 0 &&
+          typeof r.count === 'number' &&
+          r.keys && r.keys.length === r.count;
+        if (valid) {
+          for (var i = 0; i < r.keys.length; i++) {
+            if (!r.keys[i] || typeof r.keys[i].key !== 'string' || !r.keys[i].key.length) { valid = false; break; }
+          }
+        }
+        if (valid) page = r;
+      } catch (e) { /* a non-key-list frame misparsed — classify below, never throw */ }
+      return page ? { mode: 'edit', page: page } : { mode: 'run', frame: d };
+    }, function (e) {
+      if (e && e.code === 'TIMEOUT') return { mode: 'noresponse' };
+      throw e;
+    });
+  };
 
   // LIST_KEYS (paged) -> { total, keys:[{key,kind,lo,hi}] }
   Client.prototype.listKeys = function () {
@@ -3386,6 +3482,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     lineKeyToken: lineKeyToken, stripLeadingBom: stripLeadingBom,
     LEGACY_TO_CANONICAL: LEGACY_TO_CANONICAL,
     HIDDEN_KEYS: HIDDEN_KEYS, isHiddenKey: isHiddenKey, stripHiddenLines: stripHiddenLines,
+    EDITOR_HIDDEN_KEYS: EDITOR_HIDDEN_KEYS, EDITOR_DEV_KILL_SWITCH_KEYS: EDITOR_DEV_KILL_SWITCH_KEYS,
     summarizeFrame: summarizeFrame, toHex: toHex,
   };
 })();
@@ -3408,7 +3505,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
    It doubles as a faithful **offline seed** so the tool is reviewable
    without hardware (sim mode). The keys/kinds/ranges below mirror the
-   firmware's writable schema (Core/Inc/config_schema_table.h, 126 keys) so
+   firmware's writable schema (Core/Inc/config_schema_table.h, 132 keys) so
    sim mode reflects reality — but the live path always trusts LIST_KEYS.
 
    Allowed-value sets for the enum kinds are NOT defined here; they come
@@ -3577,6 +3674,22 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       fields: [
         F('RUNTIME_BOOT_COMBO', 5, { info: 'Runtime button combo (TRACK_3+TRACK_4 then LINK) that warm-reboots into config edit mode; OFF disables it entirely. Default ON.' }),
         F('RUNTIME_SOFT_RESET', 5, { info: 'Hidden combo (RESET+LINK then SHIFT) that fully reboots the module — a power cycle without pulling power. For debugging.' }),
+        F('WATCHDOG', 5, { info: 'Hardware watchdog (IWDG, 4 s): a frozen device auto-reboots and the flight recorder keeps the pre-freeze trace. Read once at boot. Default OFF until bench-verified.' }),
+        F('STICKY_TRACK_MODES', 5, { info: 'F7 dev-only kill-switch: per-track sticky play modes (track navigation no longer changes modes; mode gesture scopes to the UI track; track_mode persisted/loaded). OFF restores legacy behaviour. Default ON. Hidden from the public editor — see docs/maintenance/kill-switch-register.md.' }),
+      ],
+    },
+    {
+      id: 'rhythmv2', title: 'RHYTHM ENGINE V2', sub: 'hidden-gesture v2 engine toggles (classic engine unaffected)',
+      fields: [
+        F('RHYTHM_V2_QUANTIZED', 5, { info: 'V2 engine mode: ON = quantized (pattern-borne rhythm settings latch at the global reset boundary); OFF = freewheel (pattern changes never touch rhythm settings). Default OFF.' }),
+        F('RHYTHM_V2_T1_KNOB_DEFER', 5, { info: 'V2 dev experiment: ON (default) defers track-1 knob changes to the guide cycle boundary; OFF applies them instantly like tracks 2-4.' }),
+        F('RHYTHM_V2_EXT_CLOCK', 5, { info: 'Phase D external clock: ON arms MOD 5 as the v2 engine\'s external clock input (suspending its normal mod-trig role); OFF (default) leaves MOD 5 as a normal mod trig. Classic engine ignores this key.' }),
+      ],
+    },
+    {
+      id: 'midi', title: 'MIDI', sub: 'DIN/UART transport behavior',
+      fields: [
+        F('MIDI_DIN_CLOCK_RX', 5, { info: 'ON restores 0xF8 MIDI timing-clock passthrough on the DIN/UART input; OFF (default) drops those bytes in the RX ISR before they cost a ring-buffer slot. USB MIDI clock is unaffected either way.' }),
       ],
     },
   ];
@@ -3782,7 +3895,29 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
          keys: ['RUNTIME_BOOT_COMBO'] },
        { c: ['Fully reboot the module (RESET + LINK then SHIFT) - a power cycle',
              'without pulling power.'],
-         keys: ['RUNTIME_SOFT_RESET'] }],
+         keys: ['RUNTIME_SOFT_RESET'] },
+       { c: ['Hardware watchdog: auto-reboot if the module freezes for 4 seconds;',
+             'the flight recorder preserves the pre-freeze trace. Read once at boot.'],
+         keys: ['WATCHDOG'] }],
+    ],
+    rhythmv2: [
+      [{ c: ['Rhythm engine v2 (hidden-gesture dev engine; the classic engine ignores both).',
+             'Quantized: pattern-borne rhythm settings latch at the global reset boundary;',
+             'OFF (default) is freewheel - pattern changes never touch rhythm settings.'],
+         keys: ['RHYTHM_V2_QUANTIZED'] },
+       { c: ['Track-1 knob experiment: ON (default) defers track-1 knob changes to the',
+             'guide cycle boundary; OFF applies them instantly like tracks 2-4.'],
+         keys: ['RHYTHM_V2_T1_KNOB_DEFER'] },
+       { c: ['Phase D external clock: ON arms MOD 5 as the v2 engine\'s clock input',
+             '(suspending its normal mod-trig role). OFF (default) leaves MOD 5 as a',
+             'normal mod trig. Classic engine ignores this key.'],
+         keys: ['RHYTHM_V2_EXT_CLOCK'] }],
+    ],
+    midi: [
+      [{ c: ['DIN/UART MIDI clock receive: ON restores 0xF8 timing-clock passthrough.',
+             'OFF (default) drops those bytes in the RX ISR before the ring buffer.',
+             'USB MIDI clock is unaffected either way.'],
+         keys: ['MIDI_DIN_CLOCK_RX'] }],
     ],
   };
 
@@ -5546,6 +5681,44 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   // The button reboots either way; the label just clarifies whether pending edits are applied first.
   function rebootLabel(pending) { return pending ? 'Apply & Reboot' : 'Reboot'; }
 
+  // Connect-failure copy (F8). A device in normal RUN mode still answers our
+  // SysEx envelope with a short UX error frame (see midi-client.js probeMode),
+  // so it must never be reported as absent — it gets its own chip + what-to-do.
+  var RUN_MODE_CHIP = 'Device in RUN mode';
+  var RUN_MODE_MSG = 'Device found — it is in normal RUN mode. Power OFF, hold TRACK 3 + TRACK 4 and power on with the SD card seated, then retry.';
+  var CONNECT_TIMEOUT_HINT = 'No response — hold TRACK 3 + TRACK 4 and power on, then retry (or pick the MIDI ports manually below).';
+
+  // Pure: map a failed connect attempt (+ optional probeMode result) to UI state.
+  // `probe` is {mode:'run'|'noresponse'|'edit',...} or null (probe not run / rejected).
+  function connectFailureUi(e, probe) {
+    var ui;
+    if (e && (e.code === 'NO_PORT' || e.code === 'MULTI_PORT')) {
+      ui = { conn: 'nodevice', msg: e.message };
+    } else if (probe && probe.mode === 'run') {
+      ui = { conn: 'runmode', msg: RUN_MODE_MSG };
+    } else if ((probe && probe.mode === 'noresponse') || (e && e.code === 'TIMEOUT')) {
+      ui = { conn: 'nodevice', msg: CONNECT_TIMEOUT_HINT };
+    } else {
+      ui = { conn: 'nodevice', msg: (e && e.message) || String(e) };
+    }
+    return ui;
+  }
+
+  // Probe exactly once, only when the port bound but the first exchange failed
+  // (NO_PORT/MULTI_PORT never probe — there is nothing to talk to). A probe
+  // rejection (transport error) falls back to the un-probed classification.
+  function classifyConnectFailure(e, bound, probeFn) {
+    var p;
+    if (bound && e && e.code !== 'NO_PORT' && e.code !== 'MULTI_PORT' && typeof probeFn === 'function') {
+      p = probeFn().then(
+        function (probe) { return connectFailureUi(e, probe); },
+        function () { return connectFailureUi(e, null); });
+    } else {
+      p = Promise.resolve(connectFailureUi(e, null));
+    }
+    return p;
+  }
+
   // Migration popup copy — owner-approved verbatim (plan §3.3). No "normalize" jargon.
   var MIGRATION_TITLE = 'Update Required';
   var MIGRATION_BODY_1 = 'This config file was created with an older version of Tetrachords firmware. An update is required to make it compatible with the web-based editor.';
@@ -5590,6 +5763,10 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     MIGRATION_TITLE: MIGRATION_TITLE, MIGRATION_BODY_1: MIGRATION_BODY_1,
     MIGRATION_BODY_2: MIGRATION_BODY_2, MIGRATION_NOTE: MIGRATION_NOTE,
     DOWNLOAD_LABEL: DOWNLOAD_LABEL, DOWNLOAD_FILENAME: DOWNLOAD_FILENAME,
+    RUN_MODE_CHIP: RUN_MODE_CHIP, RUN_MODE_MSG: RUN_MODE_MSG,
+    CONNECT_TIMEOUT_HINT: CONNECT_TIMEOUT_HINT,
+    connectFailureUi: connectFailureUi,   // pure (error, probe) -> {conn,msg}; exposed for host tests
+    classifyConnectFailure: classifyConnectFailure,   // probe-once wrapper; exposed for host tests
     savedHeaderLine: savedHeaderLine, copyTextToClipboard: copyTextToClipboard,
     THEME_KEY: THEME_KEY, storedThemeDark: storedThemeDark,
     persistThemeDark: persistThemeDark, themeClass: themeClass,
@@ -6115,6 +6292,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     if (conn === 'live') { cls = 'is-live'; label = 'Edit mode · ' + props.total + ' keys'; }
     else if (conn === 'connecting') { cls = 'is-sim'; label = 'Connecting…'; }
     else if (conn === 'nodevice') { cls = 'is-sim'; label = 'No device · retry'; click = props.onConnect; }
+    else if (conn === 'runmode') { cls = 'is-sim'; label = RUN_MODE_CHIP; click = props.onConnect; }
     else { cls = 'is-sim'; label = 'Simulated · offline'; click = props.onConnect; }
     return ce('div', { className: 'tc-conn ' + cls + (click ? ' clickable' : ''), onClick: click || undefined, title: click ? 'Click to connect' : '' },
       ce('span', { className: 'dot' }), label);
@@ -6181,16 +6359,18 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
             allPorts.outputs.map(function (p) { return ce('option', { key: p.id, value: p.id }, p.name); }))),
         ce('button', { className: 'tc-btn', disabled: !props.pickIn || !props.pickOut, onClick: props.onUseSelected }, 'Use selected'));
     }
-    return ce('div', { className: 'tc-banner' + (props.conn === 'nodevice' ? ' warn' : '') },
+    var failed = props.conn === 'nodevice' || props.conn === 'runmode';
+    return ce('div', { className: 'tc-banner' + (failed ? ' warn' : '') },
       ce('div', { className: 'tc-banner-msg' },
-        ce('b', null, props.conn === 'nodevice' ? (devices.length >= 2 ? 'Choose a device' : 'Not connected') : 'Simulated (offline)'),
-        '  ', props.connMsg || (props.conn === 'nodevice'
+        ce('b', null, props.conn === 'runmode' ? RUN_MODE_CHIP
+          : (props.conn === 'nodevice' ? (devices.length >= 2 ? 'Choose a device' : 'Not connected') : 'Simulated (offline)')),
+        '  ', props.connMsg || (failed
           ? BOOT_ENTER_HINT
           : 'Showing the seeded schema. Connect a Tetrachords in edit mode to edit the real card.')),
       ce('div', { className: 'tc-banner-spacer' }),
       picker,
       ce('button', { className: 'tc-btn tc-btn-solid', onClick: props.onConnect, disabled: props.conn === 'connecting' },
-        props.conn === 'connecting' ? 'Connecting…' : (props.conn === 'nodevice' ? 'Retry' : 'Connect')),
+        props.conn === 'connecting' ? 'Connecting…' : (failed ? 'Retry' : 'Connect')),
       // §9a — the entry steps, always present while disconnected (sim AND nodevice), not buried in
       // the grey fallback text. Stands on its own full-width line so it reads even after a failed connect.
       ce('div', { className: 'tc-howto' },
@@ -6579,9 +6759,11 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
     function doConnect(sel) {
       var client = ensureClient();
+      var bound = false;   // ports bound → a later failure came from the device exchange, so probe (F8)
       setConn('connecting'); setConnMsg('Requesting MIDI access…'); setTetra(null);
       devLog('connect: requesting MIDI access' + (sel ? ' (manual pick)' : ''));
       return client.connect(sel).then(function (info) {
+        bound = true;
         setConnPorts(info);
         devLog('ports chosen: in="' + info.input + '" out="' + info.output + '"');
         setConnMsg('Reading schema from ' + info.input + '…');
@@ -6602,15 +6784,15 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
         var ports = e.tetra; if (!ports) { try { ports = client.getTetra(); } catch (_) { ports = null; } }
         setTetra(ports || null);
         if (ports && ports.devices && ports.devices.length) setPickDevice(ports.devices[0].inId);
-        if (e.code === 'NO_PORT' || e.code === 'MULTI_PORT') {
-          setConn('nodevice'); setConnMsg(e.message);
-        } else if (e.code === 'TIMEOUT') {
-          setConn('nodevice'); setConnMsg('No response — hold TRACK 3 + TRACK 4 and power on, then retry (or pick the MIDI ports manually below).');
-        } else {
-          setConn('nodevice'); setConnMsg(e.message || String(e));
-        }
-        devLog('connect failed: ' + (e.code ? e.code + ' — ' : '') + (e.message || e));
-        showToast('Connect failed: ' + (e.message || e));
+        // F8: one bounded probe (a single LIST_KEYS, existing timeout) distinguishes
+        // a device sitting in normal RUN mode from one that isn't answering at all.
+        return classifyConnectFailure(e, bound, function () { return client.probeMode(); })
+          .then(function (ui) {
+            setConn(ui.conn); setConnMsg(ui.msg);
+            devLog('connect failed: ' + (e.code ? e.code + ' — ' : '') + (e.message || e)
+              + (ui.conn === 'runmode' ? ' [probe: run mode]' : ''));
+            showToast('Connect failed: ' + ui.msg);
+          });
       });
     }
 
