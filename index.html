@@ -408,6 +408,12 @@ body {
   --w-track-2:   #009fb8;
   --w-track-3:   #16930a;
   --w-track-4:   #0023d4;
+  /* F9 — amber warning trio, sanctioned solely for the RUN-mode alert (a device
+     was found but can't be edited): a deliberate, owner-ruled exception to the
+     no-color-but-track-LEDs convention (2026-07-12). */
+  --w-warn:      #7a4d00;   /* amber ink — alert headline */
+  --w-warn-line: #c9860a;   /* amber border + chip accent */
+  --w-warn-bg:   #fbf0d2;   /* amber wash substrate */
 }
 
 /* ---- App shell ------------------------------------------------------- */
@@ -468,6 +474,11 @@ body {
 .tc-conn.is-live .dot { background: var(--w-ink); border-color: var(--w-ink); }
 .tc-conn.is-sim { border-style: dashed; }
 .tc-conn.is-sim .dot { background: var(--w-ink); border: none; clip-path: polygon(50% 0,100% 50%,50% 100%,0 50%); border-radius: 0; }
+/* F9 — RUN-mode chip: amber accent, matches the banner alert */
+.tc-conn.is-warn { border: 1px solid var(--w-warn-line); color: var(--w-warn); }
+.tc-conn.is-warn .dot { background: var(--w-warn-line); border: none; }
+.tc-conn.is-warn.clickable:hover { background: var(--w-warn-line); color: var(--w-bg); }
+.tc-conn.is-warn.clickable:hover .dot { background: var(--w-bg); border-color: var(--w-bg); }
 
 /* buttons — square, ink outline → ink fill on hover */
 .tc-btn {
@@ -805,6 +816,32 @@ body {
   background: var(--w-bg);
 }
 .tc-banner.warn { border-style: dashed; }
+
+/* F9 — RUN-mode alert: amber and prominent; the device WAS found, the message
+   is the whole point, so the copy is scaled up and the diagnostics are gone */
+.tc-banner.tc-runmode {
+  border: 2px solid var(--w-warn-line); border-radius: 0;
+  background: var(--w-warn-bg); padding: 16px 18px;
+}
+.tc-banner.tc-runmode .tc-banner-msg { font-size: calc(12.5px * var(--text-scale)); color: var(--w-ink); }
+.tc-banner.tc-runmode .tc-banner-msg b { color: var(--w-warn); font-size: 11px; }
+
+/* F9 — Advanced disclosure: manual port pickers off the main read path */
+.tc-adv { flex: 1 0 100%; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--w-hair); }
+.tc-adv-toggle {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  background: none; border: none; padding: 2px 0;
+  font-family: var(--ci-font-display); font-weight: 700; font-size: 9.5px;
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--w-ink-2);
+}
+.tc-adv-toggle:hover { color: var(--w-ink); }
+.tc-adv-toggle .tc-chev { margin-left: 0; font-size: 10px; transform: rotate(-90deg); }
+.tc-adv-toggle .tc-chev.open { transform: rotate(0); }
+.tc-adv-body { display: flex; flex-direction: column; gap: 10px; padding-top: 10px; }
+.tc-adv-note {
+  font-family: var(--ci-font-display); font-weight: 400; font-size: 11px;
+  letter-spacing: 0.02em; color: var(--w-ink-2); line-height: 1.5; text-transform: none;
+}
 .tc-banner-msg {
   font-family: var(--ci-font-display); font-weight: 400; font-size: calc(11px * var(--text-scale));
   letter-spacing: 0.04em; color: var(--w-ink-2); line-height: 1.5; text-transform: none;
@@ -1065,6 +1102,9 @@ body.theme-dark { background: #101010; }
   --w-track-2: #2fd0e8;
   --w-track-3: #46d83a;
   --w-track-4: #5a78ff;
+  --w-warn:      #ffc94d;   /* F9 amber trio, brightened for the dark substrate */
+  --w-warn-line: #d99a1c;
+  --w-warn-bg:   #2c2107;
 }
 
 /* lighten the hardcoded greys that don't come from a token */
@@ -3025,8 +3065,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
         // port at all" from "a Tetrachords half is present but its in/out couldn't be
         // paired by name" — the latter is exactly the case the manual picker rescues.
         var msg = (m.ins.length === 0 && m.outs.length === 0)
-          ? 'No "Tetrachords" found. Power the device on while holding TRACK 3 + TRACK 4, then retry — or pick the MIDI ports manually below.'
-          : 'Found a Tetrachords port but couldn’t auto-pair its input and output — pick the MIDI ports manually below.';
+          ? 'No "Tetrachords" found. Power the device on while holding TRACK 3 + TRACK 4, then retry — or pick the MIDI ports under Advanced.'
+          : 'Found a Tetrachords port but couldn’t auto-pair its input and output — pick the MIDI ports under Advanced.';
         throw tcError('NO_PORT', msg, { tetra: self.getTetra() });
       });
     });
@@ -5681,12 +5721,17 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   // The button reboots either way; the label just clarifies whether pending edits are applied first.
   function rebootLabel(pending) { return pending ? 'Apply & Reboot' : 'Reboot'; }
 
-  // Connect-failure copy (F8). A device in normal RUN mode still answers our
-  // SysEx envelope with a short UX error frame (see midi-client.js probeMode),
-  // so it must never be reported as absent — it gets its own chip + what-to-do.
+  // Connect-failure copy (F8, reworked F9). A device in normal RUN mode still
+  // answers our SysEx envelope with a short UX error frame (see midi-client.js
+  // probeMode), so it must never be reported as absent — it gets a prominent
+  // amber alert saying exactly what to do. The gesture is the RUNTIME combo
+  // (no power cycle): LINK + TRACK 3 + TRACK 4 held together ≈1 s enters edit
+  // mode from RUN mode; blue LEDs confirm, red means the SD card is missing
+  // (buttons.c poll_runtime_boot_combo; config_edit_boot.c config_edit_boot_enter).
   var RUN_MODE_CHIP = 'Device in RUN mode';
-  var RUN_MODE_MSG = 'Device found — it is in normal RUN mode. Power OFF, hold TRACK 3 + TRACK 4 and power on with the SD card seated, then retry.';
-  var CONNECT_TIMEOUT_HINT = 'No response — hold TRACK 3 + TRACK 4 and power on, then retry (or pick the MIDI ports manually below).';
+  var RUN_MODE_TITLE = 'Tetrachords is in normal RUN mode';
+  var RUN_MODE_MSG = 'To use this editor, press and hold LINK, then hold TRACK 3 + TRACK 4, and wait for the LEDs to turn blue. (Keep the SD card in — red LEDs mean no card.)';
+  var CONNECT_TIMEOUT_HINT = 'No response — hold TRACK 3 + TRACK 4 and power on, then retry (or pick the MIDI ports under Advanced).';
 
   // Pure: map a failed connect attempt (+ optional probeMode result) to UI state.
   // `probe` is {mode:'run'|'noresponse'|'edit',...} or null (probe not run / rejected).
@@ -5717,6 +5762,23 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       p = Promise.resolve(connectFailureUi(e, null));
     }
     return p;
+  }
+
+  // Pure (F9): which sections the disconnected banner shows. RUN mode means the
+  // device WAS found — lead with the amber what-to-do and keep the pickers (which
+  // read as "still searching") behind an Advanced disclosure. Outside RUN mode
+  // the 2+-device chooser stays inline (it IS the primary action); the manual
+  // In/Out rescue also lives behind Advanced (owner UX ruling, 2026-07-12).
+  function connectBannerModel(conn, deviceCount, hasPorts) {
+    var run = conn === 'runmode';
+    var picker = deviceCount >= 2 ? 'device' : (hasPorts ? 'manual' : 'none');
+    return {
+      alert: run,
+      inlinePicker: (!run && picker === 'device') ? 'device' : 'none',
+      advancedPicker: (run && picker !== 'none') ? picker
+        : ((!run && picker === 'manual') ? 'manual' : 'none'),
+      howto: !run,
+    };
   }
 
   // Migration popup copy — owner-approved verbatim (plan §3.3). No "normalize" jargon.
@@ -5763,10 +5825,11 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     MIGRATION_TITLE: MIGRATION_TITLE, MIGRATION_BODY_1: MIGRATION_BODY_1,
     MIGRATION_BODY_2: MIGRATION_BODY_2, MIGRATION_NOTE: MIGRATION_NOTE,
     DOWNLOAD_LABEL: DOWNLOAD_LABEL, DOWNLOAD_FILENAME: DOWNLOAD_FILENAME,
-    RUN_MODE_CHIP: RUN_MODE_CHIP, RUN_MODE_MSG: RUN_MODE_MSG,
+    RUN_MODE_CHIP: RUN_MODE_CHIP, RUN_MODE_TITLE: RUN_MODE_TITLE, RUN_MODE_MSG: RUN_MODE_MSG,
     CONNECT_TIMEOUT_HINT: CONNECT_TIMEOUT_HINT,
     connectFailureUi: connectFailureUi,   // pure (error, probe) -> {conn,msg}; exposed for host tests
     classifyConnectFailure: classifyConnectFailure,   // probe-once wrapper; exposed for host tests
+    connectBannerModel: connectBannerModel,   // pure (conn, deviceCount, hasPorts) -> banner sections; exposed for host tests
     savedHeaderLine: savedHeaderLine, copyTextToClipboard: copyTextToClipboard,
     THEME_KEY: THEME_KEY, storedThemeDark: storedThemeDark,
     persistThemeDark: persistThemeDark, themeClass: themeClass,
@@ -6292,7 +6355,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     if (conn === 'live') { cls = 'is-live'; label = 'Edit mode · ' + props.total + ' keys'; }
     else if (conn === 'connecting') { cls = 'is-sim'; label = 'Connecting…'; }
     else if (conn === 'nodevice') { cls = 'is-sim'; label = 'No device · retry'; click = props.onConnect; }
-    else if (conn === 'runmode') { cls = 'is-sim'; label = RUN_MODE_CHIP; click = props.onConnect; }
+    else if (conn === 'runmode') { cls = 'is-warn'; label = RUN_MODE_CHIP; click = props.onConnect; }
     else { cls = 'is-sim'; label = 'Simulated · offline'; click = props.onConnect; }
     return ce('div', { className: 'tc-conn ' + cls + (click ? ' clickable' : ''), onClick: click || undefined, title: click ? 'Click to connect' : '' },
       ce('span', { className: 'dot' }), label);
@@ -6325,57 +6388,84 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     );
   }
 
-  // #3 — connection banner. A picker appears ONLY when 2+ Tetrachords are present
-  // (a device chooser), or when matching ports can't be auto-paired (an In/Out
-  // fallback, still filtered to Tetrachords). Zero Tetrachords → guidance only.
+  // #3 — connection banner, sectioned by connectBannerModel (F9). RUN mode: a
+  // prominent amber alert with just the what-to-do — the device WAS found, so
+  // no searching-style diagnostics. Pickers: the 2+-device chooser stays inline
+  // (it IS the primary action); the manual In/Out fallback (every MIDI port, for
+  // when name-based pairing missed the device) lives behind Advanced.
   function ConnectBanner(props) {
+    var adv = useState(false); var advOpen = adv[0], setAdvOpen = adv[1];   // hooks before the live early-out (rules of hooks)
     if (props.conn === 'live') return null;
     var tetra = props.tetra;
     var devices = (tetra && tetra.devices) || [];
     var allPorts = (tetra && tetra.all) || { inputs: [], outputs: [] };
-    var picker = null;
-    if (devices.length >= 2) {
-      picker = ce('div', { className: 'tc-pick' },
-        ce('label', null, 'Device ',
-          ce('select', { className: 'tc-select', value: props.pickDevice, 'aria-label': 'Tetrachords device',
-            onChange: function (e) { props.onPickDevice(e.target.value); } },
-            devices.map(function (d) { return ce('option', { key: d.inId, value: d.inId }, d.label); }))),
-        ce('button', { className: 'tc-btn', disabled: !props.pickDevice, onClick: props.onUseDevice }, 'Connect'));
-    } else if (allPorts.inputs.length || allPorts.outputs.length) {
-      // Auto-detect found no single Tetrachords pair. Offer EVERY MIDI port so the
-      // user can connect by hand — e.g. when the device's input and output aren't
-      // both named "Tetrachords", so name-based pairing missed it. An explicit
-      // {inId,outId} pick binds those exact ports and bypasses name-matching.
-      picker = ce('div', { className: 'tc-pick' },
-        ce('label', null, 'In ',
-          ce('select', { className: 'tc-select', value: props.pickIn, 'aria-label': 'MIDI input port',
-            onChange: function (e) { props.onPickIn(e.target.value); } },
-            ce('option', { value: '' }, '— input —'),
-            allPorts.inputs.map(function (p) { return ce('option', { key: p.id, value: p.id }, p.name); }))),
-        ce('label', null, 'Out ',
-          ce('select', { className: 'tc-select', value: props.pickOut, 'aria-label': 'MIDI output port',
-            onChange: function (e) { props.onPickOut(e.target.value); } },
-            ce('option', { value: '' }, '— output —'),
-            allPorts.outputs.map(function (p) { return ce('option', { key: p.id, value: p.id }, p.name); }))),
-        ce('button', { className: 'tc-btn', disabled: !props.pickIn || !props.pickOut, onClick: props.onUseSelected }, 'Use selected'));
+    var model = connectBannerModel(props.conn, devices.length,
+      !!(allPorts.inputs.length || allPorts.outputs.length));
+    function buildPicker(kind) {
+      var p = null;
+      if (kind === 'device') {
+        p = ce('div', { className: 'tc-pick' },
+          ce('label', null, 'Device ',
+            ce('select', { className: 'tc-select', value: props.pickDevice, 'aria-label': 'Tetrachords device',
+              onChange: function (e) { props.onPickDevice(e.target.value); } },
+              devices.map(function (d) { return ce('option', { key: d.inId, value: d.inId }, d.label); }))),
+          ce('button', { className: 'tc-btn', disabled: !props.pickDevice, onClick: props.onUseDevice }, 'Connect'));
+      } else if (kind === 'manual') {
+        // An explicit {inId,outId} pick binds those exact ports and bypasses name-matching.
+        p = ce('div', { className: 'tc-pick' },
+          ce('label', null, 'In ',
+            ce('select', { className: 'tc-select', value: props.pickIn, 'aria-label': 'MIDI input port',
+              onChange: function (e) { props.onPickIn(e.target.value); } },
+              ce('option', { value: '' }, '— input —'),
+              allPorts.inputs.map(function (p) { return ce('option', { key: p.id, value: p.id }, p.name); }))),
+          ce('label', null, 'Out ',
+            ce('select', { className: 'tc-select', value: props.pickOut, 'aria-label': 'MIDI output port',
+              onChange: function (e) { props.onPickOut(e.target.value); } },
+              ce('option', { value: '' }, '— output —'),
+              allPorts.outputs.map(function (p) { return ce('option', { key: p.id, value: p.id }, p.name); }))),
+          ce('button', { className: 'tc-btn', disabled: !props.pickIn || !props.pickOut, onClick: props.onUseSelected }, 'Use selected'));
+      }
+      return p;
     }
-    var failed = props.conn === 'nodevice' || props.conn === 'runmode';
-    return ce('div', { className: 'tc-banner' + (failed ? ' warn' : '') },
-      ce('div', { className: 'tc-banner-msg' },
-        ce('b', null, props.conn === 'runmode' ? RUN_MODE_CHIP
-          : (props.conn === 'nodevice' ? (devices.length >= 2 ? 'Choose a device' : 'Not connected') : 'Simulated (offline)')),
-        '  ', props.connMsg || (failed
-          ? BOOT_ENTER_HINT
-          : 'Showing the seeded schema. Connect a Tetrachords in edit mode to edit the real card.')),
-      ce('div', { className: 'tc-banner-spacer' }),
-      picker,
-      ce('button', { className: 'tc-btn tc-btn-solid', onClick: props.onConnect, disabled: props.conn === 'connecting' },
-        props.conn === 'connecting' ? 'Connecting…' : (failed ? 'Retry' : 'Connect')),
-      // §9a — the entry steps, always present while disconnected (sim AND nodevice), not buried in
-      // the grey fallback text. Stands on its own full-width line so it reads even after a failed connect.
-      ce('div', { className: 'tc-howto' },
-        ce('b', null, 'Enter edit mode'), BOOT_ENTER_HINT)
-    );
+    var advanced = model.advancedPicker === 'none' ? null
+      : ce('div', { className: 'tc-adv' },
+        ce('button', {
+          className: 'tc-adv-toggle', 'aria-expanded': advOpen ? 'true' : 'false',
+          onClick: function () { setAdvOpen(!advOpen); },
+        }, 'Advanced', ce('span', { className: 'tc-chev' + (advOpen ? ' open' : '') }, '▾')),
+        advOpen ? ce('div', { className: 'tc-adv-body' },
+          model.alert ? ce('div', { className: 'tc-adv-note' },
+            'Already in edit mode? Pick the MIDI ports by hand and retry.') : null,
+          buildPicker(model.advancedPicker)) : null);
+    var retryBtn = ce('button', { className: 'tc-btn tc-btn-solid', onClick: props.onConnect, disabled: props.conn === 'connecting' },
+      props.conn === 'connecting' ? 'Connecting…'
+        : ((model.alert || props.conn === 'nodevice') ? 'Retry' : 'Connect'));
+    var banner;
+    if (model.alert) {
+      banner = ce('div', { className: 'tc-banner tc-runmode', role: 'alert' },
+        ce('div', { className: 'tc-banner-msg' },
+          ce('b', null, RUN_MODE_TITLE), '  ', props.connMsg || RUN_MODE_MSG),
+        ce('div', { className: 'tc-banner-spacer' }),
+        retryBtn,
+        advanced);
+    } else {
+      var failed = props.conn === 'nodevice';
+      banner = ce('div', { className: 'tc-banner' + (failed ? ' warn' : '') },
+        ce('div', { className: 'tc-banner-msg' },
+          ce('b', null, failed ? (devices.length >= 2 ? 'Choose a device' : 'Not connected') : 'Simulated (offline)'),
+          '  ', props.connMsg || (failed
+            ? BOOT_ENTER_HINT
+            : 'Showing the seeded schema. Connect a Tetrachords in edit mode to edit the real card.')),
+        ce('div', { className: 'tc-banner-spacer' }),
+        model.inlinePicker === 'device' ? buildPicker('device') : null,
+        retryBtn,
+        // §9a — the entry steps, always present while disconnected (sim AND nodevice), not buried in
+        // the grey fallback text. Stands on its own full-width line so it reads even after a failed connect.
+        ce('div', { className: 'tc-howto' },
+          ce('b', null, 'Enter edit mode'), BOOT_ENTER_HINT),
+        advanced);
+    }
+    return banner;
   }
 
   function ActionBar(props) {
