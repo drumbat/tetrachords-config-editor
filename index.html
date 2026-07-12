@@ -5733,11 +5733,13 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   // probeMode), so it must never be reported as absent — it gets a prominent
   // amber alert saying exactly what to do. The gesture is the RUNTIME combo
   // (no power cycle): LINK + TRACK 3 + TRACK 4 held together ≈1 s enters edit
-  // mode from RUN mode; blue LEDs confirm, red means the SD card is missing
-  // (buttons.c poll_runtime_boot_combo; config_edit_boot.c config_edit_boot_enter).
+  // mode from RUN mode; blue LEDs confirm (buttons.c poll_runtime_boot_combo;
+  // config_edit_boot.c config_edit_boot_enter). Note the firmware shows red
+  // LEDs and boots normally if no SD card is seated — the owner ruled that
+  // caveat OUT of the user-facing copy (2026-07-13), so don't re-add it.
   var RUN_MODE_CHIP = 'Device in RUN mode';
   var RUN_MODE_TITLE = 'Tetrachords is in normal RUN mode';
-  var RUN_MODE_MSG = 'To use this editor, press and hold LINK, then hold TRACK 3 + TRACK 4, and wait for the LEDs to turn blue. (Keep the SD card in — red LEDs mean no card.)';
+  var RUN_MODE_MSG = 'To use this editor, press and hold LINK, then hold TRACK 3 + TRACK 4, and wait for the LEDs to turn blue.';
   var CONNECT_TIMEOUT_HINT = 'No response — hold TRACK 3 + TRACK 4 and power on, then retry (or pick the MIDI ports under Advanced).';
 
   // Pure: map a failed connect attempt (+ optional probeMode result) to UI state.
