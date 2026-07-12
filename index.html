@@ -818,13 +818,20 @@ body {
 .tc-banner.warn { border-style: dashed; }
 
 /* F9 — RUN-mode alert: amber and prominent; the device WAS found, the message
-   is the whole point, so the copy is scaled up and the diagnostics are gone */
+   is the whole point, so the copy is scaled up and the diagnostics are gone.
+   Layout: headline / instruction paragraph / [Retry with Advanced right under
+   it, no divider] — owner-tuned against the live page, 2026-07-12. */
 .tc-banner.tc-runmode {
   border: 2px solid var(--w-warn-line); border-radius: 0;
-  background: var(--w-warn-bg); padding: 16px 18px;
+  background: var(--w-warn-bg); padding: 18px 20px;
 }
-.tc-banner.tc-runmode .tc-banner-msg { font-size: calc(12.5px * var(--text-scale)); color: var(--w-ink); }
-.tc-banner.tc-runmode .tc-banner-msg b { color: var(--w-warn); font-size: 11px; }
+.tc-banner.tc-runmode .tc-banner-msg { flex: 1 0 100%; color: var(--w-ink); }
+.tc-banner.tc-runmode .tc-banner-msg b {
+  display: block; color: var(--w-warn); font-size: 12.5px; margin: 0 0 10px;
+}
+.tc-runmode-body { font-size: calc(14px * var(--text-scale)); line-height: 1.55; }
+.tc-runmode-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin-top: 4px; }
+.tc-banner.tc-runmode .tc-adv { flex: none; margin-top: 0; padding-top: 0; border-top: none; }
 
 /* F9 — Advanced disclosure: manual port pickers off the main read path */
 .tc-adv { flex: 1 0 100%; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--w-hair); }
@@ -6442,12 +6449,15 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
         : ((model.alert || props.conn === 'nodevice') ? 'Retry' : 'Connect'));
     var banner;
     if (model.alert) {
+      // Headline, then the instruction as its own paragraph; Retry with the
+      // Advanced toggle directly beneath it, no divider (owner UX, 2026-07-12).
       banner = ce('div', { className: 'tc-banner tc-runmode', role: 'alert' },
         ce('div', { className: 'tc-banner-msg' },
-          ce('b', null, RUN_MODE_TITLE), '  ', props.connMsg || RUN_MODE_MSG),
-        ce('div', { className: 'tc-banner-spacer' }),
-        retryBtn,
-        advanced);
+          ce('b', null, RUN_MODE_TITLE),
+          ce('div', { className: 'tc-runmode-body' }, props.connMsg || RUN_MODE_MSG)),
+        ce('div', { className: 'tc-runmode-actions' },
+          retryBtn,
+          advanced));
     } else {
       var failed = props.conn === 'nodevice';
       banner = ce('div', { className: 'tc-banner' + (failed ? ' warn' : '') },
