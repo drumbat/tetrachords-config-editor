@@ -5842,6 +5842,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     savedHeaderLine: savedHeaderLine, copyTextToClipboard: copyTextToClipboard,
     THEME_KEY: THEME_KEY, storedThemeDark: storedThemeDark,
     persistThemeDark: persistThemeDark, themeClass: themeClass,
+    scalaSlotModel: scalaSlotModel,   // pure fileNames -> {slots,warnings}; exposed for host tests
+    scalaUploadCheck: scalaUploadCheck,   // pure upload-name gate (name-only); exposed for host tests
     buildSections: buildSections,   // pure schema -> sections (hidden keys filtered); exposed for host tests
     buildStoreState: buildStoreState,   // pure persisted-draft (STORE) shape; exposed for host tests
     restoreDisplayKnobs: restoreDisplayKnobs,   // pure STORE -> appearance knobs (displayV-gated); exposed for host tests
@@ -6265,21 +6267,109 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     );
   }
 
+  // ─── SCALA: slot model (2026-07-13 restructure) ──────────────────
+  // Firmware contract (owner-locked, docs/reports/execution-doc-2026-07-11.html
+  // lane F10): slot 0 is the immutable built-in Equal Temperament — no SD file
+  // can ever load it. User slots 1..6 map ONE-INDEXED to SD files named
+  // 0:/SCALA/<n>_*.scl, n in 1..6 -> slot n. Prefixes 0, 7, 8+, or a missing
+  // prefix are rejected by firmware at load (there is no slot 7). This model
+  // is deliberately independent of TUNING_1..8 (the CV_n_TUNING calibration
+  // subsystem, at_*.c / tuning.c) — a different slot space; do not conflate.
+  var SCALA_SLOT_COUNT = 6;
+  // Built-in defaults for empty slots (docs/firmware/alternate-tuning-library.md:75,
+  // flash_tunings[NUM_TUNING_SLOTS] — slot 0 Equal Temperament handled separately).
+  var SCALA_BUILTIN_DEFAULTS = {
+    1: '5-Limit Just Intonation', 2: 'Pythagorean', 3: 'Turkish Makam 1',
+    4: 'Turkish Makam 2', 5: 'Harmonic Series', 6: 'Hybrid 10-TET/JI',
+  };
+  var SCALA_LEGACY_7_WARNING = '7_*.scl is a legacy filename from before the slot restructure — firmware now rejects any prefix outside 1..6, so this file is ignored. Migration note: numbering changed to be one-indexed by slot; an old 1_*.scl now loads slot 1, 2_..6_ each shift up one slot, and 7_*.scl has no slot at all.';
+
+  // Pure: fileNames (0:/SCALA/ directory listing) -> slot model.
+  //   slots: [{ slot, locked, name, builtin, label, duplicate }] for 0..6
+  //   warnings: [string]
+  function scalaSlotModel(fileNames) {
+    var files = (fileNames || []).slice().sort();
+    var bySlot = {}; // slot -> [names]
+    var warnings = [];
+    files.forEach(function (name) {
+      var m = /^(\d+)_/.exec(name);
+      if (!m) {
+        warnings.push(name + ': ignored by firmware (needs 1_..6_ prefix)');
+        return;
+      }
+      var n = parseInt(m[1], 10);
+      if (n === 7) {
+        warnings.push(name + ': ' + SCALA_LEGACY_7_WARNING);
+        return;
+      }
+      if (n === 0 || n > 7) {
+        warnings.push(name + ': ignored by firmware (needs 1_..6_ prefix)');
+        return;
+      }
+      (bySlot[n] = bySlot[n] || []).push(name);
+    });
+
+    var slots = [{ slot: 0, locked: true, name: null, builtin: null, duplicate: false,
+      label: '0 · Equal Temperament (built-in, locked)' }];
+    for (var s = 1; s <= SCALA_SLOT_COUNT; s++) {
+      var names = bySlot[s] || [];
+      var duplicate = names.length > 1;
+      if (duplicate) {
+        warnings.push('slot ' + s + ': duplicate prefix (' + names.join(', ') + ') — firmware loads whichever discovery orders first (indeterminate)');
+      }
+      if (names.length) {
+        slots.push({ slot: s, locked: false, name: names[0], builtin: null, duplicate: duplicate,
+          label: String(s) + ' · ' + names[0] });
+      } else {
+        var def = SCALA_BUILTIN_DEFAULTS[s];
+        slots.push({ slot: s, locked: false, name: null, builtin: def, duplicate: false,
+          label: String(s) + ' · ' + def + ' (built-in default, no card file)' });
+      }
+    }
+    return { slots: slots, warnings: warnings };
+  }
+
+  // Pure: upload-name gate for the Scala upload path (editor-side UX guard —
+  // FILE_WRITE on the wire stays a dumb transport; see midi-client.js
+  // isValidScalaName, which this wraps unchanged). Rejects any name that
+  // isn't a valid .scl name, or whose prefix isn't 1..6.
+  function scalaUploadCheck(name) {
+    if (!M.isValidScalaName(name)) {
+      return { ok: false, reason: '"' + name + '" is not a valid .scl filename' };
+    }
+    var m = /^(\d+)_/.exec(name);
+    if (!m) {
+      return { ok: false, reason: 'filename must start with a slot prefix 1_..6_' };
+    }
+    var n = parseInt(m[1], 10);
+    if (n < 1 || n > 6) {
+      return { ok: false, reason: 'prefix ' + n + '_ is out of range — only 1_..6_ map to a slot (0, 7, and above are rejected by firmware)' };
+    }
+    return { ok: true, reason: null };
+  }
+
   // ─── SCALA: tuning-map note (rendered inside the CV section) ─────
   function TuningMapNote(props) {
     var files = props.files || [];
-    var sorted = files.slice().sort();
-    var rows = [];
-    for (var i = 0; i < 8; i++) {
-      rows.push(ce('div', { key: i, className: 'tc-tmap-row' },
-        ce('span', { className: 'tc-tmap-slot' }, 'TUNING_' + (i + 1)),
+    var model = scalaSlotModel(files);
+    // slot 0 (locked, built-in ET) intentionally carries no action affordance here —
+    // this component only ever renders informational spans, never a button.
+    var rows = model.slots.map(function (s) {
+      var fileText = s.locked ? 'Equal Temperament (built-in, locked)'
+        : (s.name || (s.builtin + ' (built-in default, no card file)'));
+      return ce('div', { key: s.slot, className: 'tc-tmap-row' + (s.locked ? ' locked' : '') },
+        ce('span', { className: 'tc-tmap-slot' }, 'slot ' + s.slot + (s.locked ? ' (locked)' : '')),
         ce('span', { className: 'tc-tmap-arrow' }, '→'),
-        ce('span', { className: 'tc-tmap-file' + (sorted[i] ? '' : ' empty') }, sorted[i] || '(none)')));
-    }
+        ce('span', { className: 'tc-tmap-file' + (s.name ? '' : ' empty') }, fileText));
+    });
+    var noteLines = ['Slot 0 is the built-in Equal Temperament and can never be replaced by a card file. ' +
+      'Slots 1–6 load one-indexed by filename prefix from 0:/SCALA/1_..6_*.scl — adding, deleting, or ' +
+      'renaming a file changes only that slot. Changes apply on the next reboot. Manage files in SCALA FILES below.']
+      .concat(model.warnings);
     return ce('div', { className: 'tc-tmap' },
-      ce('div', { className: 'tc-tmap-head' }, 'TUNING_n ↔ 0:/SCALA/ (name-sorted)'),
+      ce('div', { className: 'tc-tmap-head' }, 'Scala slots (0:/SCALA/, one-indexed by filename prefix)'),
       ce('div', { className: 'tc-tmap-grid' }, rows),
-      ce('div', { className: 'tc-tmap-warn' }, 'Adding / deleting / renaming a .scl reorders these slots. Changes apply on reboot. Manage files in SCALA FILES below.'));
+      ce('div', { className: 'tc-tmap-warn' }, noteLines.map(function (w, i) { return ce('div', { key: i }, w); })));
   }
 
   // ─── SCALA FILES panel (live API) ───────────────────────────────
@@ -6287,7 +6377,6 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     var live = props.live, files = props.files, upload = props.upload, scalaError = props.scalaError;
     var dr = useState(false); var drag = dr[0], setDrag = dr[1];
     var fileRef = useRef(null);
-    var sorted = files.slice().sort();
 
     var pick = function () { if (fileRef.current) fileRef.current.click(); };
     var onPicked = function (file) { if (file) props.onUpload(file); };
@@ -6323,14 +6412,24 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
           'Couldn’t list 0:/SCALA/ — the request failed: ' + scalaError + '. Reload to try again.');
       } else if (files.length) {
         list = files.slice().sort().map(function (name, i) {
-          var slot = sorted.indexOf(name); // 0-based; <8 maps to TUNING_(slot+1)
-          return ce('div', { key: name, className: 'tc-scl-frow' },
-            ce('span', { className: 'tc-scl-fnum' }, slot < 8 ? ('T' + (slot + 1)) : '–'),
+          // slot is derived from the filename's NUMERIC PREFIX (not list position) —
+          // the firmware only recognizes 1_..6_; 0_/7_+/missing are dead files it ignores.
+          var m = /^(\d+)_/.exec(name);
+          var n = m ? parseInt(m[1], 10) : null;
+          var validSlot = n !== null && n >= 1 && n <= SCALA_SLOT_COUNT;
+          var ignoredReason = validSlot ? null
+            : (n === null ? 'missing slot prefix' : n === 0 ? 'prefix 0_ is reserved for the locked built-in slot'
+              : n === 7 ? 'legacy 7_ prefix — no longer a valid slot' : 'prefix ' + n + '_ out of range');
+          return ce('div', { key: name, className: 'tc-scl-frow' + (validSlot ? '' : ' ignored') },
+            ce('span', { className: 'tc-scl-fnum' + (validSlot ? '' : ' ignored') }, validSlot ? String(n) : '–'),
             ce('span', { className: 'tc-scl-fname', title: name }, name),
+            ignoredReason ? ce('span', { className: 'tc-scl-fwarn' }, 'ignored by firmware — ' + ignoredReason) : null,
             ce('div', { className: 'tc-scl-actions' },
               ce('button', { className: 'tc-btn-mini ghost', onClick: function () { props.onPreview(name); } }, 'Preview'),
               ce('button', { className: 'tc-btn-mini ghost', onClick: function () { props.onDownload(name); } }, 'Download'),
-              ce('button', { className: 'tc-btn-mini ghost', onClick: function () { props.onDelete(name); } }, 'Delete')));
+              // slot 0 (n === 0) has no delete/overwrite affordance — it names the locked
+              // built-in slot, not a real user slot, even though the bytes exist on disk.
+              n === 0 ? null : ce('button', { className: 'tc-btn-mini ghost', onClick: function () { props.onDelete(name); } }, 'Delete')));
         });
       } else {
         list = ce('div', { className: 'tc-scl-empty' }, '0:/SCALA/ is empty or absent (0 files). Upload a .scl above to create it.');
@@ -6339,7 +6438,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       body = ce(R.Fragment, null,
         dropzone,
         ce('div', { className: 'tc-scl-list' }, list),
-        ce('div', { className: 'tc-scl-foot' }, 'The .scl files here ARE the TUNING_1..8 slots (name-sorted) that CV_n_TUNING selects. Changes apply on the next boot.'));
+        ce('div', { className: 'tc-scl-foot' }, 'Files here map one-indexed by filename prefix: 1_..6_*.scl fill user slots 1–6. Slot 0 is the built-in Equal Temperament and is locked — no card file can occupy it, and 7_ (legacy) or any other prefix is ignored by firmware. This is a separate slot space from the CV_n_TUNING calibration keys. Changes apply on the next reboot.'));
     }
 
     var count = live ? (scalaError ? '!' : String(files.length)) : null;
@@ -7067,8 +7166,12 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
 
     function onUploadScala(file) {
       var name = file.name;
-      if (!M.isValidScalaName(name)) {
-        showToast('Rejected: "' + name + '" is not a valid .scl filename'); return;
+      // scalaUploadCheck subsumes M.isValidScalaName (it calls it first, same reason text)
+      // and additionally gates the 1_..6_ slot-prefix range — one editor-side UX guard,
+      // not two overlapping ones. FILE_WRITE on the wire stays a dumb transport.
+      var slotCheck = scalaUploadCheck(name);
+      if (!slotCheck.ok) {
+        showToast('Rejected: ' + slotCheck.reason); return;
       }
       readFileBytes(file).then(function (bytes) {
         if (bytes.length > M.MAX_SCALA_SIZE) { showToast('Rejected: ' + bytes.length + ' B exceeds ' + M.MAX_SCALA_SIZE + ' B'); return; }
