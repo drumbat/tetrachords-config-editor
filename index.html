@@ -5770,7 +5770,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
         F('TUNING_RANDOMIZE', 5, { info: 'On a randomized song reset (SCALE_RANDOMIZE ON), also draw one of the 7 flash tuning slots from the TUNING_RAND_SLOT_0..6 pool. Empty pool leaves tuning untouched. Default OFF.' }),
         F('TUNING_RAND_SLOT_0', 5, { hidden: true, info: 'Include tuning slot 0 (Equal Temperament) in the randomized tuning pool. Default ON.' }),
         F('TUNING_RAND_SLOT_1', 5, { hidden: true, info: 'Include tuning slot 1 (5-Limit Just Intonation, the dynamic-tuning base) in the randomized tuning pool. Default ON.' }),
-        F('TUNING_RAND_SLOT_2', 5, { hidden: true, info: 'Include tuning slot 2 (Pythagorean) in the randomized tuning pool. Default ON.' }),
+        F('TUNING_RAND_SLOT_2', 5, { hidden: true, info: 'Include tuning slot 2 (JI Major Pentatonic) in the randomized tuning pool. Default ON.' }),
         F('TUNING_RAND_SLOT_3', 5, { hidden: true, info: 'Include tuning slot 3 (Turkish Makam 1) in the randomized tuning pool. Default ON.' }),
         F('TUNING_RAND_SLOT_4', 5, { hidden: true, info: 'Include tuning slot 4 (Turkish Makam 2) in the randomized tuning pool. Default ON.' }),
         F('TUNING_RAND_SLOT_5', 5, { hidden: true, info: 'Include tuning slot 5 (Harmonic Series) in the randomized tuning pool. Default ON.' }),
@@ -9060,7 +9060,7 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   // is a user slot whose factory built-in is the dynamic-tuning 5-Limit JI base.
   var SCALA_BUILTIN_DEFAULTS = {
     1: '5-Limit Just Intonation (dynamic-tuning base)',
-    2: 'Pythagorean', 3: 'Turkish Makam 1',
+    2: 'JI Major Pentatonic', 3: 'Turkish Makam 1',
     4: 'Turkish Makam 2', 5: 'Harmonic Series', 6: 'Hybrid 10-TET/JI',
   };
   var SCALA_LEGACY_7_WARNING = '7_*.scl is a legacy filename from before the slot restructure: firmware rejects any prefix outside 1..6, so this file is ignored.';
@@ -12949,8 +12949,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   var LIBRARY = [
     { id: 'ji5', name: '5-Limit Just Intonation', sub: '12 notes · ratios · slot 1 default', builtinSlot: 1,
       text: sclText('5-limit just intonation, 12 notes', ['16/15', '9/8', '6/5', '5/4', '4/3', '45/32', '3/2', '8/5', '5/3', '16/9', '15/8', '2/1']) },
-    { id: 'pyth', name: 'Pythagorean', sub: '12 notes · 3-limit ratios · slot 2 default', builtinSlot: 2,
-      text: sclText('Pythagorean 12-note chromatic scale', ['256/243', '9/8', '32/27', '81/64', '4/3', '729/512', '3/2', '128/81', '27/16', '16/9', '243/128', '2/1']) },
+    { id: 'jipent', name: 'JI Major Pentatonic', sub: '5 notes · ratios · slot 2 default', builtinSlot: 2,
+      text: sclText('Just intonation major pentatonic (C D E G A)', ['9/8', '5/4', '3/2', '5/3', '2/1']) },
     { id: 'makam1', name: 'Turkish Makam 1', sub: '12 notes · cents · slot 3 default (bundled, not read from firmware)', builtinSlot: 3, bundledFromFlash: true,
       text: sclText('Kurdi+Rast composite, 12 notes (bundled default preview, not read from firmware)',
         ['90.0', '204.0', '300.0', '384.0', '500.0', '600.0', '702.0', '792.0', '906.0', '1002.0', '1086.0', '2/1']) },
@@ -12962,6 +12962,8 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     { id: 'hybrid10', name: 'Hybrid 10-TET/JI', sub: '12 notes · cents · slot 6 default (bundled, not read from firmware)', builtinSlot: 6, bundledFromFlash: true,
       text: sclText('10-TET grid with 6/5 and 5/3 JI anchors, 12 notes (bundled default preview, not read from firmware)',
         ['120.0', '240.0', '315.641', '360.0', '480.0', '600.0', '720.0', '840.0', '884.359', '960.0', '1080.0', '2/1']) },
+    { id: 'pyth', name: 'Pythagorean', sub: '12 notes · 3-limit ratios · was the slot 2 default before 2026-08-06',
+      text: sclText('Pythagorean 12-note chromatic scale', ['256/243', '9/8', '32/27', '81/64', '4/3', '729/512', '3/2', '128/81', '27/16', '16/9', '243/128', '2/1']) },
     { id: 'werck3', name: 'Werckmeister III', sub: '12 notes · well temperament',
       text: sclText('Werckmeister III well temperament (1691)', ['90.225', '192.180', '294.135', '390.225', '498.045', '588.270', '696.090', '792.180', '888.270', '996.090', '1092.180', '1200.000']) },
     { id: 'meanq', name: 'Quarter-comma Meantone', sub: '12 notes · pure major thirds',
