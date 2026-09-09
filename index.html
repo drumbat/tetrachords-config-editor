@@ -5504,6 +5504,28 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
     });
   }
 
+  // openPort(): explicitly open one Web MIDI port before we probe it. Chrome opens a
+  // MIDIInput/MIDIOutput implicitly on the first send() or onmidimessage assignment, and
+  // that open is ASYNCHRONOUS - it can take longer than a probe window, so a reply sent
+  // before the input finishes opening is delivered to a port that isn't listening yet and
+  // the probe times out (the "reports nothing found" incident, 2026-09-09). A MIDIInput
+  // also delivers nothing at all until it is open. Ports without an open() (the Node mock,
+  // the bridge adapter) are already open, so they resolve immediately. Each open is
+  // wrapped so one port failing to open never aborts the rest.
+  function openPort(p, trace) {
+    if (!p || typeof p.open !== 'function') { if (trace) trace(p, false, 0); return Promise.resolve(p); }
+    var t0 = Date.now();
+    var r;
+    try { r = p.open(); } catch (e) { if (trace) trace(p, true, Date.now() - t0, e); return Promise.resolve(p); }
+    if (r && typeof r.then === 'function') return r.then(
+      function () { if (trace) trace(p, true, Date.now() - t0); return p; },
+      function (e) { if (trace) trace(p, true, Date.now() - t0, e); return p; });
+    if (trace) trace(p, true, Date.now() - t0);
+    return Promise.resolve(p);
+  }
+  function openPorts(ports, trace) { return Promise.all(ports.map(function (p) { return openPort(p, trace); })); }
+  function portDesc(p) { return (p && (p.name || '?')) + '/' + (p && p.id); }
+
   // pairByProof(): probe every connected Tetrachords output ONE AT A TIME (so a reply
   // can never be misattributed when two outputs could reach the same input), listening
   // across all not-yet-paired candidate inputs. Resolves with an array of paired modules
@@ -5511,33 +5533,57 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
   //   [{ index, label, inId, outId, inName, outName, mode:'run'|'edit', fwBuildId:null }]
   // fwBuildId is left null: a HELLO (harness family 0x7C) probe is optional and its
   // packed frame parsing is deferred to the real-module leg (H283 brief item 1).
+  //
+  // Ports are explicitly opened before the first probe (openPorts above). Outputs that
+  // get no reply in the first pass are re-probed once with a wider window before being
+  // declared absent, so a port whose async open lands late still pairs on the retry.
   Client.prototype.pairByProof = function (opts) {
     opts = opts || {};
     var self = this;
-    var timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 150;
+    var timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 400;
+    var secondPassMs = opts.secondPassMs != null ? opts.secondPassMs : 800;
     var verifyMs = opts.verifyMs != null ? opts.verifyMs : timeoutMs;
     var cand = this._candidatePorts();
     var outs = cand.outs, ins = cand.ins;
     var usedIn = {};
+    var answered = {};
     var modules = [];
-    var chain = Promise.resolve();
-    outs.forEach(function (outPort) {
-      chain = chain.then(function () {
-        var avail = ins.filter(function (p) { return !usedIn[p.id]; });
-        if (!avail.length) return null;
-        return sendAwaitOnPorts(outPort, avail, reqListKeys(0), OP.LIST_KEYS, timeoutMs).then(function (res) {
-          if (res) {
-            usedIn[res.inPort.id] = true;
-            modules.push({
-              inId: res.inPort.id, outId: outPort.id,
-              inName: res.inPort.name, outName: outPort.name,
-              mode: classifyProbeFrame(res.frame), fwBuildId: null,
-            });
-          }
+    function ev(text) { self._traceEvent('pair: ' + text); }
+    ev('probing ' + outs.length + ' output(s) against ' + ins.length + ' input(s)');
+    function probePass(outList, windowMs) {
+      var chain = Promise.resolve();
+      outList.forEach(function (outPort) {
+        chain = chain.then(function () {
+          var avail = ins.filter(function (p) { return !usedIn[p.id]; });
+          if (!avail.length) return null;
+          return sendAwaitOnPorts(outPort, avail, reqListKeys(0), OP.LIST_KEYS, windowMs).then(function (res) {
+            if (res) {
+              usedIn[res.inPort.id] = true;
+              answered[outPort.id] = true;
+              ev('out ' + portDesc(outPort) + ' -> reply on ' + portDesc(res.inPort) + ' (' + windowMs + 'ms window)');
+              modules.push({
+                inId: res.inPort.id, outId: outPort.id,
+                inName: res.inPort.name, outName: outPort.name,
+                mode: classifyProbeFrame(res.frame), fwBuildId: null,
+              });
+            } else {
+              ev('out ' + portDesc(outPort) + ' -> no reply (' + windowMs + 'ms window)');
+            }
+          });
         });
       });
-    });
-    return chain.then(function () {
+      return chain;
+    }
+    return openPorts(outs.concat(ins), function (p, hadOpen, ms) {
+      ev('open ' + portDesc(p) + (hadOpen ? ' awaited ' + ms + 'ms' : ' already open'));
+    }).then(function () {
+      return probePass(outs, timeoutMs);
+    }).then(function () {
+      var unanswered = outs.filter(function (o) { return !answered[o.id]; });
+      if (!unanswered.length) return null;
+      ev('second pass over ' + unanswered.length + ' unanswered output(s) at ' + secondPassMs + 'ms');
+      return probePass(unanswered, secondPassMs);
+    }).then(function () {
       // Attribution-by-proof verification (H283 finding 1). A LIST_KEYS reply from
       // one output that arrives late, during another output's probe window, can be
       // cross-attributed (its input paired with the wrong output). Re-prove each pair
@@ -5559,6 +5605,9 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
       });
       return vchain.then(function () {
         verified.forEach(function (m, i) { m.index = i; m.label = 'Tetrachords ' + (i + 1); });
+        ev('verified ' + verified.length + ' pair(s)' + (verified.length
+          ? ': ' + verified.map(function (m) { return m.outId + '<->' + m.inId + ' (' + m.mode + ')'; }).join(', ')
+          : ''));
         return verified;
       });
     });
@@ -5591,6 +5640,9 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
     if (!outPort || !inPort) {
       return Promise.reject(tcError('NO_PORT', 'That module is no longer connected - rescan and try again.'));
     }
+    // Open the module's ports before the first LED send (Chrome opens asynchronously; a
+    // send/reply before open is lost). Idempotent when pairByProof already opened them.
+    return openPorts([outPort, inPort]).then(function () {
     return sendAwaitOnPorts(outPort, [inPort], reqHostOverride(true), OP.HOST_OVERRIDE, 400)
       .then(function (res) {
         // HOST_OVERRIDE is a RUN-mode-only op (sysex_debugger.c: in edit mode the config
@@ -5610,6 +5662,7 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
           .then(function () { return sendAwaitOnPorts(outPort, [inPort], reqHostOverride(false), OP.HOST_OVERRIDE, 400); })
           .then(function () { return { ok: true }; });
       });
+    });
   };
 
   // awaitEditModeAfterReset(): after a remote edit-mode entry the chosen module drops
@@ -5729,8 +5782,7 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
           throw tcError('NO_PORT', 'That Tetrachords port is no longer available. Rescan and try again.',
             { tetra: self.getTetra() });
         }
-        self._bind(inp, outp);
-        return { input: inp.name, output: outp.name };
+        return self._bind(inp, outp).then(function () { return { input: inp.name, output: outp.name }; });
       }
       return self._awaitTetraPorts().then(function () {
         // Exactly one connected in + one connected out is unambiguous: bind it directly,
@@ -5738,8 +5790,8 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
         // This is the common single-module case and matches the old no-traffic connect.
         var single = self.listTetraDevices();
         if (single.length === 1) {
-          self._bind(self.access.inputs.get(single[0].inId), self.access.outputs.get(single[0].outId));
-          return { input: single[0].inName, output: single[0].outName };
+          return self._bind(self.access.inputs.get(single[0].inId), self.access.outputs.get(single[0].outId))
+            .then(function () { return { input: single[0].inName, output: single[0].outName }; });
         }
         var cand = self._candidatePorts(), m = self._matchingPorts();
         if (cand.ins.length === 0 && cand.outs.length === 0) {
@@ -5751,8 +5803,8 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
         // Two or more of either half: prove each pair (the identically-named case).
         return self.pairByProof().then(function (modules) {
           if (modules.length === 1) {
-            self._bind(self.access.inputs.get(modules[0].inId), self.access.outputs.get(modules[0].outId));
-            return { input: modules[0].inName, output: modules[0].outName };
+            return self._bind(self.access.inputs.get(modules[0].inId), self.access.outputs.get(modules[0].outId))
+              .then(function () { return { input: modules[0].inName, output: modules[0].outName }; });
           }
           if (modules.length >= 2) {
             throw tcError('MULTI_PORT',
@@ -5767,6 +5819,14 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
     });
   };
 
+  // _bind(): attach our reassembly handler to the input, remember both ports, and OPEN
+  // them before the caller sends its first request. In Chrome a MIDIInput delivers nothing
+  // and a MIDIOutput.send can be lost until the port's async open() has completed; assigning
+  // onmidimessage merely STARTS that open, it does not wait for it - so the first LIST_KEYS
+  // went out before the input was listening and every reply was missed (the RUN-mode
+  // "TIMEOUT on both attempts" incident, 2026-09-09). Returns a promise that resolves once
+  // both ports are open. Guarded: a port with no open() (mock/bridge) is already open, and a
+  // reject is tolerated (we stay bound; a genuinely unopenable port fails at first send).
   Client.prototype._bind = function (inp, outp) {
     var self = this;
     if (this.input) this.input.onmidimessage = null;
@@ -5774,6 +5834,9 @@ return createPublicPolicy({"hidden":["058e8de11ac51e7f6bcc61e2f9c011dce3ebbd8c62
     this.output = outp;
     this._rx = null;
     this.input.onmidimessage = function (e) { self._onMessage(e); };
+    return openPorts([this.input, this.output], function (p, hadOpen, ms) {
+      if (hadOpen) self._traceEvent('bind: opened ' + portDesc(p) + ' in ' + ms + 'ms');
+    });
   };
 
   Client.prototype.isConnected = function () { return !!(this.input && this.output); };
@@ -9121,6 +9184,10 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
   var RUN_MODE_TITLE = 'Your Tetrachords is in normal playing mode';
   var RUN_MODE_MSG = 'Press Connect and the editor will switch it into edit mode for you. If that does not work, hold TRACK 3 + TRACK 4 and press LINK, then press Connect again.';
   var CONNECT_TIMEOUT_HINT = 'No answer from a Tetrachords. Check the USB cable and power, then press Connect again, or pick the MIDI ports by hand under Advanced.';
+  // Shown when the proof probe finds no answering module. Names the usual causes,
+  // including a port another program is holding open (a common Chrome cause of a
+  // silent no-answer), and the retry.
+  var NO_DEVICE_MSG = 'No Tetrachords answered. Check the USB cable, make sure no other program has the module open, then press Connect again.';
   // Shown after Apply & Reboot: the editor can put the module back into edit mode over
   // USB, so the user just presses Connect again once it has restarted (no physical
   // TRACK-combo needed - the editor drives entry itself).
@@ -9362,7 +9429,7 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
     MIGRATION_BODY_2: MIGRATION_BODY_2, MIGRATION_NOTE: MIGRATION_NOTE,
     DOWNLOAD_LABEL: DOWNLOAD_LABEL, DOWNLOAD_FILENAME: DOWNLOAD_FILENAME,
     RUN_MODE_CHIP: RUN_MODE_CHIP, RUN_MODE_TITLE: RUN_MODE_TITLE, RUN_MODE_MSG: RUN_MODE_MSG,
-    CONNECT_TIMEOUT_HINT: CONNECT_TIMEOUT_HINT, POST_APPLY_MSG: POST_APPLY_MSG,
+    CONNECT_TIMEOUT_HINT: CONNECT_TIMEOUT_HINT, NO_DEVICE_MSG: NO_DEVICE_MSG, POST_APPLY_MSG: POST_APPLY_MSG,
     connectFailureUi: connectFailureUi,   // pure (error, probe) -> {conn,msg}; exposed for host tests
     classifyConnectFailure: classifyConnectFailure,   // probe-once wrapper; exposed for host tests
     connectBannerModel: connectBannerModel,   // pure (conn, deviceCount, hasPorts) -> banner sections; exposed for host tests
@@ -13295,11 +13362,14 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
       return client.discover().then(function (mods) {
         if (mods.length === 0) {
           var m = client.getTetra();
-          var hasHalf = !!(m.ports && (m.ports.inputs.length || m.ports.outputs.length));
+          var inNames = (m.ports && m.ports.inputs || []).map(function (p) { return p.name || p.id; });
+          var outNames = (m.ports && m.ports.outputs || []).map(function (p) { return p.name || p.id; });
+          var hasHalf = !!(inNames.length || outNames.length);
+          devLog('connect: 0 modules paired · Tetrachords inputs=[' + inNames.join(', ') + '] outputs=[' + outNames.join(', ') + '] · '
+            + (hasHalf ? 'ports present but none answered the probe' : 'no Tetrachords ports found'));
           setTetra(m);
           setConn('nodevice');
-          setConnMsg(hasHalf ? CONNECT_TIMEOUT_HINT
-            : 'No Tetrachords is answering. Check the USB cable and power, then press Connect again.');
+          setConnMsg(NO_DEVICE_MSG);
           return null;
         }
         if (mods.length === 1) { return connectChosen(client, mods[0]); }
