@@ -4405,6 +4405,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     0x00: 'OK',
     0x02: 'Unknown or non-writable key (bad field)',
     0x06: 'Value out of range, rejected, or too large for the wire',
+    0x10: 'No SD card in the module.',   // UX_ERR_SD_NOT_READY (sysex_debugger.h)
     0x11: 'SD write failed',
     0x13: 'Invalid Scala filename (must be a safe 1–64 char .scl name)',
     0x14: 'File not found',
@@ -4458,6 +4459,15 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     if (Object.prototype.hasOwnProperty.call(FW_ERR, code)) return FW_ERR[code];
     return 'Operation failed (status 0x' + (code | 0).toString(16) + ')';
   }
+  // The config/tuning-family status message for `code`, or null when this table has no
+  // specific entry for it. Callers use null to tell "the module reported a condition we
+  // recognise" (a real status the module understands, e.g. 0x10 -> no SD card, shown
+  // plainly) from "the module answered an op it does not implement" (older firmware's
+  // default reply, e.g. UX_ERR_INVALID_SLOT, which is not in this table) - the Tunings
+  // Library keeps the update-firmware notice for the latter.
+  function configStatusMessage(code) {
+    return Object.prototype.hasOwnProperty.call(ERR, code) ? ERR[code] : null;
+  }
   function tcError(kind, message, extra) {
     var e = new Error(message);
     e.code = kind;
@@ -4490,16 +4500,26 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
       Array.prototype.every.call(rest, function (c) { var x = c.charCodeAt(0); return x >= 0x20 && x <= 0x7E; });
   }
 
-  // ─── Tuning bank label validator (H284, WIRE.md 0x1F): the label is baked
-  //     into the card directory name (bank_N_<label>), so it must be printable
-  //     7-bit ASCII AND stay inside the tuning_bank_parse_dir_name charset
-  //     (letters, digits, space, hyphen, underscore) - otherwise ascii() would
-  //     silently bit-mask a non-7-bit character into a different byte and the
-  //     firmware would reject the resulting name anyway. The empty label ("")
-  //     is valid and strips the label. ──
+  // ─── Tuning bank label validator (H284, WIRE.md 0x1F). ONE source of truth,
+  //     mirrored EXACTLY from the firmware's config_tunings_label_is_valid
+  //     (Core/Src/config_edit_wire.c): the empty label ("") is valid and strips
+  //     the label; a non-empty label may not begin with '.' or '~' (dotfile /
+  //     traversal-shaped), and every byte must be printable 7-bit ASCII
+  //     (0x20..0x7E, so no control, DEL or non-7-bit) and not a path separator
+  //     ('/', '\\', ':'). Everything else in that range - '.', '!', etc. - is
+  //     accepted, so the host must not reject a label the firmware would take.
+  //     If config_tunings_label_is_valid ever changes, update this to match. ──
   function isValidBankLabel(label) {
-    return typeof label === 'string' && label.length <= TUNING_BANK_LABEL_MAX &&
-      /^[A-Za-z0-9 _-]*$/.test(label);
+    var ok = typeof label === 'string' && label.length <= TUNING_BANK_LABEL_MAX;
+    if (ok && label.length > 0) {
+      if (label[0] === '.' || label[0] === '~') ok = false;
+      for (var i = 0; ok && i < label.length; i++) {
+        var c = label.charCodeAt(i);
+        if (c < 0x20 || c > 0x7E) ok = false;                                  // control / DEL / non-7-bit
+        else if (c === 0x2F || c === 0x5C || c === 0x3A) ok = false;           // '/' '\' ':' path separators
+      }
+    }
+    return ok;
   }
 
   // ─── Song Library label validator (plan §Wire protocol: "printable 7-bit
@@ -6507,7 +6527,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
       return Promise.reject(tcError('LABEL_TOO_LONG', 'Label is ' + label.length + ' characters; the limit is ' + TUNING_BANK_LABEL_MAX + '.'));
     }
     if (!isValidBankLabel(label)) {
-      return Promise.reject(tcError('BAD_LABEL', 'A bank label can only use letters, numbers, spaces, hyphens and underscores.'));
+      return Promise.reject(tcError('BAD_LABEL', 'A bank label must be printable text, cannot start with "." or "~", and cannot contain / \\ or :.'));
     }
     return this.sendAndAwait(reqTuningBankLabelSet(bank, label), OP.TUNING_BANK_LABEL_SET).then(function (d) {
       var st = status(d);
@@ -6895,6 +6915,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     Client: Client,
     OP: OP,
     errMsg: errMsg,
+    configStatusMessage: configStatusMessage,
     isValidScalaName: isValidScalaName,
     isValidTuningName: isValidTuningName,
     isValidBankLabel: isValidBankLabel,
@@ -10004,7 +10025,7 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
           changed.map(function (f, i) {
             return ce(R.Fragment, { key: f.key }, i ? '  ·  ' : null, f.key + ' ', ce('b', { style: { color: 'var(--w-ink)' } }, niceVal(values[f.key])));
           }))
-      : 'Unchanged';
+      : 'No change';
 
     var byKey = {};
     sec.fields.forEach(function (f) { byKey[f.key] = f; });
@@ -10024,7 +10045,7 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
           title: 'Open the full-width Program Change editor',
           onClick: function (e) { e.stopPropagation(); props.onOpenEditor(); },
         }, 'Full editor →') : null,
-        dc ? ce('span', { className: 'tc-count has-dirty' }, dc + ' ●') : null,
+        ce('span', { className: 'tc-count' + (dc ? ' has-dirty' : '') }, dc ? (dc + ' ●') : sec.fields.length),
         ce('span', { className: 'tc-chev' }, '▾')
       ),
       ce('div', { className: 'tc-panel-summary' }, summary),
@@ -10140,13 +10161,13 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
           changed.map(function (f, i) {
             return ce(R.Fragment, { key: f.key }, i ? '  ·  ' : null, f.key + ' ', ce('b', { style: { color: 'var(--w-ink)' } }, niceVal(values[f.key])));
           }))
-      : 'Unchanged';
+      : 'No change';
 
     return ce('div', { className: 'tc-panel' + (open ? '' : ' collapsed'), ref: props.panelRef, 'data-screen-label': sec.title, onFocusCapture: props.onActivate, onMouseDown: props.onActivate },
       ce('div', { className: 'tc-panel-head', onClick: props.onToggle },
         ce('h3', null, sec.title),
         ce('span', { className: 'sub' }, sec.sub),
-        dc ? ce('span', { className: 'tc-count has-dirty' }, dc + ' ●') : null,
+        ce('span', { className: 'tc-count' + (dc ? ' has-dirty' : '') }, dc ? (dc + ' ●') : sec.fields.length),
         ce('span', { className: 'tc-chev' }, '▾')
       ),
       ce('div', { className: 'tc-panel-summary' }, summary),
@@ -12789,7 +12810,7 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
     var pending = n || nLegacy;                 // user edits, or legacy lines still to migrate on save
     var label = n
       ? ce(R.Fragment, null, ce('b', null, n), ' changed')
-      : (nLegacy ? ce(R.Fragment, null, ce('b', null, nLegacy), ' legacy line' + (nLegacy > 1 ? 's' : '') + ' to migrate') : 'Unchanged');
+      : (nLegacy ? ce(R.Fragment, null, ce('b', null, nLegacy), ' legacy line' + (nLegacy > 1 ? 's' : '') + ' to migrate') : 'No change');
     return ce('div', { className: 'tc-actionbar' },
       ce('span', { className: 'tc-changecount' + (pending ? '' : ' none') }, label),
       live ? null : ce('span', { className: 'tc-wip' }, 'Read-only until connected'),
@@ -12825,7 +12846,7 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
         sections.map(function (sec) {
           var dc = sec.fields.filter(function (f) { return values[f.key] !== committed[f.key]; }).length;
           return ce('a', { key: sec.id, className: (dc ? 'dirty' : '') + (props.active === sec.id ? ' active' : ''), onClick: function () { props.onJump(sec.id); } },
-            ce('span', { className: 'dot' }), sec.title, dc ? ce('span', { className: 'ct' }, dc + ' ●') : null);
+            ce('span', { className: 'dot' }), sec.title, ce('span', { className: 'ct' }, dc ? (dc + ' ●') : sec.fields.length));
         }),
         props.hasReadonly ? ce('a', { className: (props.active === 'readonly' ? ' active' : ''), onClick: function () { props.onJump('readonly'); } },
           ce('span', { className: 'dot' }), 'ON CARD (R/O)', ce('span', { className: 'ct' }, props.readonlyCount)) : null,
@@ -15149,6 +15170,17 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
   // Shown when a connected module does not answer the bank ops (firmware older than h284).
   var NO_BANK_OPS_TEXT = "This module's firmware cannot list tuning banks yet. Update the firmware to see them here. The old SCALA folder below still works.";
 
+  // Classify a failed banks load. A status the module actually reported (it understood the
+  // op, e.g. no SD card) is surfaced in its own words; a timeout, or a status the client has
+  // no message for (older firmware answering an op it does not implement), keeps the
+  // update-firmware notice. Either way the old SCALA folder group stays offered.
+  function classifyLoadError(e) {
+    var M = (typeof window !== 'undefined') ? window.TCMidi : null;
+    var msg = (e && e.code === 'STATUS' && e.status != null && M && M.configStatusMessage)
+      ? M.configStatusMessage(e.status) : null;
+    return msg ? { kind: 'status', message: msg } : { kind: 'unsupported', message: NO_BANK_OPS_TEXT };
+  }
+
   function bankSummary(banks, selection, live) {
     if (!live) return 'Connect a Tetrachords to see its tunings';
     if (!selection) return 'Reading tunings from the module...';
@@ -15447,7 +15479,8 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
             ce('button', { className: 'tc-btn-mini ghost', onClick: doClose }, 'Close'))),
         ce('input', { type: 'file', accept: '.scl,.tscl', hidden: true, ref: fileRef, onChange: function (e) { chooseUpload(e.target.files[0]); e.target.value = ''; } }),
         !live ? ce('div', { className: 'tl-offline' }, 'Connect a Tetrachords in edit mode to see and manage its tuning banks.') : null,
-        (live && props.loadError) ? ce('div', { className: 'tl-offline tl-unsupported' }, NO_BANK_OPS_TEXT) : null,
+        (live && props.loadError) ? ce('div', { className: 'tl-offline tl-unsupported' },
+          (props.loadError.kind === 'status' ? props.loadError.message : NO_BANK_OPS_TEXT)) : null,
         (live && !props.loadError) ? ce('div', { className: 'tl-figs' },
           ce(BankKnob, { banks: banks, shownBank: shownBank, selectedBank: selectedBank, onPick: function (bank) { setShownBank(bank); setPick(null); } }),
           ce(LedRing, { presentMask: shown ? shown.presentMask : 0, selectedPosition: selectedPosition })) : null,
@@ -15485,7 +15518,7 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
       if (!live || !c) { setBanks(null); setSelection(null); return Promise.resolve(); }
       return Promise.all([c.tuningBanksList(), c.tuningSelectionGet()]).then(function (r) {
         setBanks(r[0]); setSelection(r[1]); setLoadErr(null);
-      }, function (e) { setLoadErr(e.message || String(e)); });
+      }, function (e) { setLoadErr(classifyLoadError(e)); });
     }
 
     useEffect(function () { refresh(); }, [live]);
@@ -15512,7 +15545,9 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
       }, function (e) { setBusy(false); showToast('Failed: ' + (e.message || e)); throw e; });
     }
 
-    var summary = loadErr ? 'This module cannot list tuning banks yet (update its firmware)' : bankSummary(banks, selection, live);
+    var summary = loadErr
+      ? (loadErr.kind === 'status' ? loadErr.message : 'This module cannot list tuning banks yet (update its firmware)')
+      : bankSummary(banks, selection, live);
     var count = live ? (banks ? String(banks.filter(function (b) { return b.source !== 'none'; }).length) : '-') : '-';
 
     return ce('div', { className: 'tc-panel' + (props.open ? '' : ' collapsed'), ref: props.panelRef, 'data-screen-label': 'TUNINGS LIBRARY', onFocusCapture: props.onActivate, onMouseDown: props.onActivate },
