@@ -9458,9 +9458,10 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
   // by firmware at load. Only slot 0 (Equal Temperament) is locked; slot 1
   // defaults to the dynamic-tuning 5-Limit JI base but a 1_*.scl overwrites it
   // (owner ruling q-tt78-1, 2026-08-09; supersedes the TT15 slot-1 reservation).
-  // This model is deliberately independent of TUNING_1..8 (the CV_n_TUNING
-  // calibration subsystem, at_*.c / tuning.c), a different slot space; do not
-  // conflate.
+  // This model is deliberately independent of TUNING_1..8 (the per-CV
+  // calibration subsystem, at_*.c / tuning.c, selected by CV_n_CAL). CV_n_TUNING
+  // is a retired, ignored key (TT228) and is not part of either slot space; do
+  // not conflate.
   var SCALA_SLOT_COUNT = 6;             // highest physical slot index (slots 0..6)
   var SCALA_FIRST_USER_SLOT = 1;        // lowest SD-writable slot (only slot 0 ET is locked, q-tt78-1)
   // Exposed for host tests: the TUNINGS panel (scala-slots.js) keeps its OWN copy
@@ -10925,7 +10926,7 @@ window.TC_SCHEMA = {"sections":[{"id":"state","title":"STATE & RECALL","sub":"po
       body = ce(R.Fragment, null,
         dropzone,
         ce('div', { className: 'tc-scl-list' }, list),
-        ce('div', { className: 'tc-scl-foot' }, 'Files here map one-indexed by filename prefix: 1_..6_*.scl fill user slots 1-6. Only slot 0 (Equal Temperament) is a locked built-in that no card file can occupy; slot 1 defaults to the 5-Limit Just Intonation dynamic-tuning base but a 1_*.scl overwrites it. 0_/7_ (legacy) or any other prefix is ignored by firmware. This is a separate slot space from the CV_n_TUNING calibration keys. Changes apply on the next reboot.'));
+        ce('div', { className: 'tc-scl-foot' }, 'Files here map one-indexed by filename prefix: 1_..6_*.scl fill user slots 1-6. Only slot 0 (Equal Temperament) is a locked built-in that no card file can occupy; slot 1 defaults to the 5-Limit Just Intonation dynamic-tuning base but a 1_*.scl overwrites it. 0_/7_ (legacy) or any other prefix is ignored by firmware. This is a separate slot space from CV_n_CAL, which selects a calibration slot for each CV output. CV_n_TUNING is a retired key and is ignored if present. Changes apply on the next reboot.'));
     }
 
     var count = live ? (scalaError ? '!' : String(files.length)) : null;
