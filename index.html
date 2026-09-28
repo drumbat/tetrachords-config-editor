@@ -412,8 +412,11 @@ body {
      (--w-accent-fill, #2E6DAF in candidates 4/5, falling back to
      --tc-rail-active-color where a theme has no accent), 1px, fixed. Not a
      setting any more - the exploration tooling (slider, toggle, their
-     localStorage state) was removed once the owner settled on this value. */
-  --tc-rail-group-color: var(--w-accent-fill, var(--tc-rail-active-color));
+     localStorage state) was removed once the owner settled on this value.
+     The colour is declared on .tc-app below, not here: a custom property's
+     var() resolves on the element that declares it, and --w-accent-fill only
+     exists on .tc-app.theme-cand4d/5d, so declared on :root it fell back to
+     the light-theme ink (#111) and the border vanished on the dark rail. */
   --tc-rail-group-border: 1px;
 }
 
@@ -422,6 +425,7 @@ body {
   background: var(--w-bg); color: var(--w-ink); min-height: 100%;
   --text-scale: 1;   /* body / value text multiplier (Display slider) */
   --title-scale: 1;  /* panel-title multiplier (Display slider) */
+  --tc-rail-group-color: var(--w-accent-fill, var(--tc-rail-active-color));
 }
 
 /* ---- Layout: rail + panels (responsive) ----------------------------- */
