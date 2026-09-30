@@ -1,0 +1,39 @@
+{
+  "generated": "2026-09-30T23:53:35.351Z",
+  "releases": [
+    {
+      "version": "1.1.2.1",
+      "file": "tetrachords_1_1_2_1.bin",
+      "size": 778460,
+      "sha256": "23b299804492c9fea58956e5a53cfaf516cc29e5c505c9c7be2c0fa1e4a38369",
+      "url": "firmware/a107bdcb/tetrachords_1_1_2_1.bin"
+    }
+  ],
+  "packages": [
+    {
+      "id": "a107bdcb",
+      "version": "1.1.2.1",
+      "date": "2026-09-29",
+      "channel": "beta",
+      "identity": {
+        "schema": "firmware-staging-manifest-1",
+        "source_commit": "a107bdc",
+        "source_commit_full": "a107bdcbf5668a3aafead91754c37c5e77ea9578",
+        "expected_fw_build_id": "0x0A107BDC",
+        "hello_caps": "0x0003958D"
+      },
+      "firmware": {
+        "file": "tetrachords_1_1_2_1.bin",
+        "url": "firmware/a107bdcb/tetrachords_1_1_2_1.bin",
+        "size": 778460,
+        "sha256": "23b299804492c9fea58956e5a53cfaf516cc29e5c505c9c7be2c0fa1e4a38369"
+      },
+      "sector7": {
+        "file": "tc_firmware_b_2.dat",
+        "url": "firmware/a107bdcb/tc_firmware_b_2.dat",
+        "size": 88865,
+        "sha256": "1e4313cada6eafdead8e53779d9b8e5b4b46948b5c87d7b0da21198c9aedc4e1"
+      }
+    }
+  ]
+}

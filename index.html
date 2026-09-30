@@ -1148,6 +1148,18 @@ body {
   font-size: 11.5px; line-height: 1.5; color: var(--w-ink-3); text-transform: none; letter-spacing: 0;
 }
 
+/* ---- pre-connect modal (USB / Manual) -------------------------------- */
+.tc-preconnect { width: min(520px, 100%); }
+.tc-preconnect-section + .tc-preconnect-section { border-top: 1px solid var(--w-line); }
+.tc-preconnect-body { padding: 16px 18px 18px; }
+.tc-preconnect-body p {
+  margin: 0 0 12px;
+  font-family: var(--ci-font-display); font-weight: 400; font-style: normal;
+  font-size: 13px; line-height: 1.55; letter-spacing: 0; color: var(--w-ink); text-transform: none;
+}
+.tc-preconnect-body p.tc-preconnect-msg { color: var(--w-ink-3); font-style: italic; }
+.tc-preconnect-actions { display: flex; gap: 12px; margin: 12px 0 0; flex-wrap: wrap; }
+
 /* ---- calibration different-module warning --------------------------- */
 .tc-cal-mismatch { width: min(480px, 100%); }
 .tc-cal-mismatch-body { padding: 18px; }
@@ -1802,6 +1814,25 @@ body.theme-cand5d { background: #191815; }
 .tc-fw-confirm { display: flex; align-items: center; gap: 8px; }
 .tc-fw-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .tc-fw-reboot-instructions { display: flex; flex-direction: column; gap: 4px; color: var(--w-ink-2); }
+/* Package list (manifest v2 packages[]): one selectable row per package. */
+.tc-fw-package-row { cursor: pointer; padding: 4px 6px; border: 1px solid transparent; }
+.tc-fw-package-row.selected { border-color: var(--w-line); }
+.tc-fw-package-row:focus-visible { outline: 2px solid var(--tc-rail-active-color, currentColor); outline-offset: 1px; }
+.tc-fw-pkg-date, .tc-fw-pkg-file { color: var(--w-ink-2); }
+.tc-fw-installed { color: #3f9e5b; }
+.tc-fw-channels { display: flex; gap: 6px; margin-bottom: 6px; }
+.tc-fw-channels .active { font-weight: 700; }
+.tc-fw-steps { font-family: var(--ci-font-mono); font-size: calc(12px * var(--text-scale)); }
+.tc-fw-steps ol { margin: 6px 0 0; padding-left: 18px; }
+.tc-fw-steps p { margin: 0 0 2px; }
+/* Two-file push: one row per step; the current step is bold, finished steps dim. */
+.tc-fw-push-steps { margin: 6px 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.tc-fw-push-step { color: var(--w-ink-2); }
+.tc-fw-push-step.is-active { color: inherit; font-weight: 700; }
+.tc-fw-push-step.is-done .tc-fw-push-label::after { content: " \2713"; color: #3f9e5b; }
+.tc-fw-push-step.is-failed { color: inherit; }
+.tc-fw-push-bytes { font-family: var(--ci-font-mono); }
+.tc-fw-install-note { margin-top: 6px; }
 
 /* Identify's pressed state and Reboot remain distinct in every display theme. */
 .tc-app .tc-btn.tc-btn-identifying,
@@ -2470,9 +2501,6 @@ body.theme-cand5d { background: #191815; }
 .mv-pc-names-table th, .mv-pc-names-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--w-hair); }
 .mv-pc-names-table th { color: var(--w-ink-2); font-weight: 600; }
 .mv-pc-names-elektron { margin: 16px 0 8px; font-size: calc(var(--fz-sm) * var(--fz-scale)); color: var(--w-ink-2); }
-.mv-pc-names-elektron-table { width: 100%; border-collapse: collapse; font-size: calc(var(--fz-sm) * var(--fz-scale)); }
-.mv-pc-names-elektron-table th, .mv-pc-names-elektron-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--w-hair); }
-.mv-pc-names-elektron-table th { color: var(--w-ink-2); font-weight: 600; }
 .mv-custom-tail {
   display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-start;
   padding-top: 18px; border-top: 1px solid var(--w-hair);
@@ -3822,7 +3850,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
   var ERR = {
     0x00: 'OK',
     0x02: 'Unknown or non-writable key (bad field)',
-    0x06: 'Value out of range, rejected, or too large for the wire',
+    0x06: 'Value out of range or too large for the wire',
     0x10: 'No SD card in the module.',   // UX_ERR_SD_NOT_READY (sysex_debugger.h)
     0x11: 'SD write failed',
     0x13: 'Invalid Scala filename (must be a safe 1–64 char .scl name)',
@@ -5110,6 +5138,8 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     this.output = null;
     this._queue = [];                   // pending jobs (serial)
     this._busy = false;
+    this._harnessSession = null;        // { token, clientId, nonce } while a harness session is held
+    this._harnessTag = 0;               // last harness correlation TAG sent (1..127)
     this._pending = null;               // { expectOp, job } awaiting a response
     this._timer = null;
     this._rx = null;                    // reassembly buffer (array | null)
@@ -5385,8 +5415,8 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
   // unknown without slowing pairing beyond readPairUid's normal per-op window.
   //
   // Adversarial review asked to gate this call on caps bit 17 so legacy firmware skips the
-  // request outright. This client never fetches caps: there is no HELLO/build-id wire read
-  // here at all (fw-wire-update.mjs documents that as deferred, H283 item 1), and by the
+  // request outright. Pairing never fetches caps: pairByProof sends no HELLO (the
+  // capability probe Client.prototype.hello is a separate, post-connect call), and by the
   // time we reach this call readPairUid has already gotten a harness-family RESP for
   // UID_READ, so the module is definitely reachable enough to answer HELLO too. Fetching
   // caps first would mean sending HELLO (0x01, same family, same per-op window) before every
@@ -5437,6 +5467,293 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     var payload = harnessDecode7(fr.slice(HARNESS_HEADER_LEN, fr.length - 1));
     if (!payload || payload.length !== HARNESS_SERIAL_RESP_LEN) return null;
     return { present: payload[4], serial: dec32le(payload.slice(5, 9)) };
+  }
+  // HELLO (harness 0x7C op 0x01, API.md §3.1): the capability probe. Served in RUN, edit
+  // and booting modes (harness_core.c harness_opcode_mode_mask), sessionless, empty REQ
+  // payload: [F0 77 01 7C 01 01 TAG 00 00 F7]. RESP payload (harness_build_hello_payload)
+  // is [ms u32][proto_maj][proto_min][caps u32][build_flags u16][fw_build_id u32][mode]
+  // [session_busy][holder_age_s][max_in u16][max_out u16] = 23 bytes, all LE. The reply
+  // is matched by family + opcode + echoed TAG, so it can never be confused with a 0x41
+  // CONFIG_WIRE frame or another harness op's reply.
+  var HARNESS_OP_HELLO = 0x01, HARNESS_HELLO_TAG = 0x48, HARNESS_HELLO_PAYLOAD_LEN = 23;
+  var HELLO_WINDOW_MS = 400;
+  // harness_core.h HARNESS_MODE_*.
+  var HARNESS_MODE_NAME = { 0: 'booting', 1: 'run', 2: 'edit' };
+  // Caps bits (harness_glue.c harness_glue_caps): FILE_XFER bit 12, FIELD_UPDATE bit 15.
+  var CAP_FILE_XFER = 1 << 12, CAP_FIELD_UPDATE = 1 << 15;
+  function reqHarnessHello() {
+    return [SYSEX.START, SYSEX.MFG, SYSEX.DEV, HARNESS_FAMILY, HARNESS_KIND_REQ,
+      HARNESS_OP_HELLO, HARNESS_HELLO_TAG, 0x00, 0x00, SYSEX.END];
+  }
+  function isHarnessHelloFrame(fr) {
+    return fr.length > HARNESS_HEADER_LEN && fr[1] === SYSEX.MFG && fr[2] === SYSEX.DEV &&
+      fr[3] === HARNESS_FAMILY && fr[5] === HARNESS_OP_HELLO && fr[6] === HARNESS_HELLO_TAG &&
+      (fr[4] === HARNESS_KIND_RESP || fr[4] === HARNESS_KIND_NACK);
+  }
+  // Classify one matched HELLO frame into the hello() result shape.
+  function parseHarnessHello(fr) {
+    var result;
+    if (fr[4] === HARNESS_KIND_NACK) {
+      var np = harnessDecode7(fr.slice(HARNESS_HEADER_LEN, fr.length - 1));
+      result = { ok: false, reason: 'nack', nackReason: (np && np.length >= 5) ? np[4] : null, raw: fr };
+    } else {
+      var body = fr.slice(HARNESS_HEADER_LEN, fr.length - 1);
+      var clean = fr[fr.length - 1] === SYSEX.END && body.every(function (b) { return b <= 0x7F; });
+      var payload = clean ? harnessDecode7(body) : null;
+      if (!payload || payload.length < HARNESS_HELLO_PAYLOAD_LEN) {
+        result = { ok: false, reason: 'malformed', raw: fr };
+      } else {
+        var modeCode = payload[16];
+        result = {
+          ok: true, caps: dec32le(payload.slice(6, 10)), fwBuildId: dec32le(payload.slice(12, 16)),
+          mode: HARNESS_MODE_NAME[modeCode] || 'unknown', modeCode: modeCode, raw: fr,
+        };
+      }
+    }
+    return result;
+  }
+  // Pure: may this module accept update files over USB? Only a live HELLO answer counts
+  // (never card files): FIELD_UPDATE (bit 15) and FILE_XFER (bit 12) both advertised.
+  function fieldUpdateCapable(helloResult) {
+    var caps = helloResult && helloResult.ok ? (helloResult.caps >>> 0) : 0;
+    return !!(helloResult && helloResult.ok === true &&
+      (caps & CAP_FIELD_UPDATE) !== 0 && (caps & CAP_FILE_XFER) !== 0);
+  }
+
+  // ─── harness sessions + FILE_WRITE (second-file update, RUN mode) ──────
+  // Wire layouts (all multi-byte fields little-endian, payload 7-bit collector encoded,
+  // header [F0 77 01 7C KIND OP TAG SESSION FLAGS]):
+  //   OPEN_SESSION 0x04 REQ [client_id u16][nonce u32], header SESSION 0
+  //     (harness_core.h HARNESS_OPEN_SESSION_REQ_LEN; harness_core.c
+  //     harness_parse_open_session_req); RESP [ms u32][token u8][run_sig u32].
+  //     Served in RUN and edit mode (harness_core.c harness_opcode_mode_mask).
+  //   CLOSE_SESSION 0x05 REQ empty, header SESSION = token; RESP [ms u32]
+  //     (harness_glue.c OPEN/CLOSE_SESSION serve branches).
+  //   FILE_WRITE 0x52, session-required, RUN-only (harness_core.c
+  //     harness_opcode_requires_session / harness_opcode_mode_mask); edit mode NACKs
+  //     WRONG_MODE before the session gate. Sub-command byte first
+  //     (harness_file_core.h harness_file_write_cmd_t):
+  //     BEGIN  [0][arm u32 'FILE'][total u32][crc32 u32][path_len u8][path]
+  //            -> RESP [ms u32][accepted u8]
+  //     CHUNK  [1][offset u32][data_len u8 <= 128][data][crc32 u32 of data]
+  //            -> RESP [ms u32][received u32]
+  //     COMMIT [2] -> RESP [ms u32][crc32 u32]
+  //     ABORT  [3] -> RESP [ms u32] (always succeeds)
+  //   NACK payload [ms u32][reason u8][detail u16] (harness_core.h HARNESS_NACK_PAYLOAD_LEN).
+  // CRC is CRC-32/ISO-HDLC (zlib), the software crc32_calculate (Core/Src/crc32.c).
+  // A release image accepts FILE_WRITE only for the reserved update-file name
+  // (harness_field_update.h HARNESS_FIELD_UPDATE_TARGET_NAME; every other name NACKs
+  // UNSUPPORTED, harness_glue.c harness_glue_file_write_begin). The firmware installs
+  // that file itself at the next normal start: FIELD_UPDATE_TRIGGER 0x57 is never sent.
+  var HARNESS_OP_OPEN_SESSION = 0x04, HARNESS_OP_CLOSE_SESSION = 0x05, HARNESS_OP_FILE_WRITE = 0x52;
+  var HARNESS_NACK_NO_SESSION = 0x08;
+  var FILE_WRITE_CMD = { BEGIN: 0, CHUNK: 1, COMMIT: 2, ABORT: 3 };
+  var FILE_WRITE_ARM = 0x46494C45;           // HARNESS_FILE_WRITE_ARM_TOKEN ('FILE')
+  var FILE_WRITE_CHUNK_MAX = 128;            // HARNESS_FILE_WRITE_CHUNK_MAX
+  var FIELD_UPDATE_FILE_NAME = 'TC_FIRMWARE_B_2.DAT';
+  var HARNESS_EDITOR_CLIENT_ID = 0x0CED;     // any u16; identifies this editor's session
+  var FILE_WRITE_COMMIT_TIMEOUT = 5000;      // COMMIT closes the temp file and renames on the card
+  var FILE_WRITE_CHUNK_TIMEOUT = 1000;       // each CHUNK is one f_write before the RESP
+  // harness_core.h harness_nack_reason_t, for readable errors.
+  var HARNESS_NACK_NAME = {
+    0x01: 'BAD_LENGTH', 0x02: 'OVERSIZE', 0x03: 'UNKNOWN_OPCODE', 0x04: 'WRONG_MODE',
+    0x05: 'NOT_READY', 0x06: 'UNSUPPORTED', 0x07: 'BUSY', 0x08: 'NO_SESSION', 0x09: 'BAD_ARG',
+    0x0A: 'RANGE', 0x0B: 'SEQ_ERROR', 0x0C: 'RATE_LIMITED', 0x0D: 'SAFETY_HELD', 0x0E: 'CANCELLED',
+  };
+  function harnessEncode7(payload) {
+    var enc = [];
+    for (var g = 0; g < payload.length; g += 7) {
+      var k = Math.min(7, payload.length - g), c = 0, j;
+      for (j = 0; j < k; j++) if (payload[g + j] & 0x80) c |= (1 << j);
+      enc.push(c);
+      for (j = 0; j < k; j++) enc.push(payload[g + j] & 0x7F);
+    }
+    return enc;
+  }
+  function le16(v) { return [v & 0xFF, (v >>> 8) & 0xFF]; }
+  function le32(v) { v = v >>> 0; return [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF]; }
+  // CRC-32/ISO-HDLC (zlib): reflected poly 0xEDB88320, init and xorout 0xFFFFFFFF.
+  var _crc32Table = null;
+  function crc32(bytes) {
+    if (!_crc32Table) {
+      _crc32Table = new Array(256);
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        _crc32Table[n] = c >>> 0;
+      }
+    }
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) crc = _crc32Table[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  // One harness REQ frame: header + encoded payload + F7. tag and session are 7-bit.
+  function reqHarness(opcode, tag, session, payload) {
+    return [SYSEX.START, SYSEX.MFG, SYSEX.DEV, HARNESS_FAMILY, HARNESS_KIND_REQ,
+      opcode & 0x7F, tag & 0x7F, session & 0x7F, 0x00].concat(harnessEncode7(payload || []), [SYSEX.END]);
+  }
+  function reqHarnessOpenSession(tag, clientId, nonce) {
+    return reqHarness(HARNESS_OP_OPEN_SESSION, tag, 0, le16(clientId).concat(le32(nonce)));
+  }
+  function reqHarnessCloseSession(tag, token) { return reqHarness(HARNESS_OP_CLOSE_SESSION, tag, token, []); }
+  function reqFileWriteBegin(tag, token, name, total, crc) {
+    var path = ascii(name);
+    return reqHarness(HARNESS_OP_FILE_WRITE, tag, token, [FILE_WRITE_CMD.BEGIN].concat(
+      le32(FILE_WRITE_ARM), le32(total), le32(crc), [path.length], path));
+  }
+  function reqFileWriteChunk(tag, token, offset, data) {
+    return reqHarness(HARNESS_OP_FILE_WRITE, tag, token, [FILE_WRITE_CMD.CHUNK].concat(
+      le32(offset), [data.length], data, le32(crc32(data))));
+  }
+  function reqFileWriteCommit(tag, token) { return reqHarness(HARNESS_OP_FILE_WRITE, tag, token, [FILE_WRITE_CMD.COMMIT]); }
+  function reqFileWriteAbort(tag, token) { return reqHarness(HARNESS_OP_FILE_WRITE, tag, token, [FILE_WRITE_CMD.ABORT]); }
+  // Matcher for the reply to one harness REQ: same family, opcode and echoed TAG,
+  // RESP or NACK.
+  function harnessReplyMatcher(opcode, tag) {
+    return function (fr) {
+      return fr.length > HARNESS_HEADER_LEN && fr[1] === SYSEX.MFG && fr[2] === SYSEX.DEV &&
+        fr[3] === HARNESS_FAMILY && fr[5] === opcode && fr[6] === tag &&
+        (fr[4] === HARNESS_KIND_RESP || fr[4] === HARNESS_KIND_NACK);
+    };
+  }
+  // Classify a matched reply: { ok:true, payload } or { ok:false, nackReason, nackDetail }
+  // or { ok:false, malformed:true }.
+  function parseHarnessReply(fr) {
+    var body = fr.slice(HARNESS_HEADER_LEN, fr.length - 1);
+    var clean = fr[fr.length - 1] === SYSEX.END && body.every(function (b) { return b <= 0x7F; });
+    var payload = clean ? harnessDecode7(body) : null;
+    var r;
+    if (!payload) {
+      r = { ok: false, malformed: true };
+    } else if (fr[4] === HARNESS_KIND_NACK) {
+      r = payload.length >= 7
+        ? { ok: false, nackReason: payload[4], nackDetail: payload[5] | (payload[6] << 8) }
+        : { ok: false, malformed: true };
+    } else {
+      r = { ok: true, payload: payload };
+    }
+    return r;
+  }
+  function harnessNackError(step, reply, extra) {
+    var e;
+    if (reply.malformed) {
+      e = tcError('MALFORMED', step + ': the module sent a malformed reply.', extra);
+    } else {
+      var name = HARNESS_NACK_NAME[reply.nackReason] || ('0x' + (reply.nackReason | 0).toString(16));
+      e = tcError('HARNESS_NACK', step + ' refused by the module: ' + name + ' (detail ' + reply.nackDetail + ').',
+        Object.assign({ step: step, nackReason: reply.nackReason, nackReasonName: name, nackDetail: reply.nackDetail }, extra || {}));
+    }
+    return e;
+  }
+
+  // ─── sector-7 file (the second file, TC_FIRMWARE_B_2.DAT) validation ───────
+  // Mirrors of Core/Inc/tuning_shelf.h; tools/flash/shelf_image.py
+  // validate_candidate_structure is the host mirror of the firmware's
+  // tc_shelf_validate_image this follows. Header (32 bytes, LE):
+  //   [magic u32][layout_version u16][header_size u16][payload_length u32][payload_crc u32]
+  //   [payload_kind u16][reserved u16][feature_flags u32][app_compat_min u32][app_compat_max u32]
+  // Tooling dispatch record at payload offset TC_SHELF_TOOLING_OFFSET (16 bytes, LE):
+  //   [magic u32][abi_version u16][record_size u16][dispatch_entry u32][build_id u32]
+  // build_id (tuning_shelf.h, ABI 8 on) is the HARNESS_FW_BUILD_ID of the build that
+  // linked the file: the firmware refuses a file from another build (TC_SHELF_WRONG_BUILD),
+  // so it must equal the firmware file's HELLO build id.
+  var SHELF_LAYOUT_VERSION = 4;                  // TC_SHELF_LAYOUT_VERSION
+  var SHELF_KIND_INTERNAL_TOOLING = 2;           // TC_SHELF_KIND_INTERNAL_TOOLING
+  var SHELF_REQUIRED_FEATURES = 0x00000007;      // TUNING | TOOLING | TUNINGS_LIBRARY, exact
+  var SHELF_TOOLING_OFFSET = 22560;              // TC_SHELF_TOOLING_OFFSET (payload-relative)
+  var SHELF_TOOLING_BYTES = 32768;               // TC_SHELF_TOOLING_BYTES
+  var SHELF_BASE = 0x080E0000;                   // TC_SHELF_BASE
+  var TOOLING_DISPATCH_MAGIC = 0x31545449;       // TC_TOOLING_DISPATCH_MAGIC
+  var TOOLING_DISPATCH_RECORD_BYTES = 16;
+  var TOOLING_ABI_FIRST_WITH_BUILD_ID = 8;       // the ABI that turned the last word into build_id
+  var TOOLING_START_ADDR = SHELF_BASE + SHELF_HEADER_SIZE + SHELF_TOOLING_OFFSET;
+  var TOOLING_END_ADDR = TOOLING_START_ADDR + SHELF_TOOLING_BYTES;
+  function u32le(bytes, off) {
+    return ((bytes[off] & 0xFF) | ((bytes[off + 1] & 0xFF) << 8) |
+      ((bytes[off + 2] & 0xFF) << 16) | ((bytes[off + 3] & 0xFF) << 24)) >>> 0;
+  }
+  function u16le(bytes, off) { return (bytes[off] & 0xFF) | ((bytes[off + 1] & 0xFF) << 8); }
+  // "0x04BE881F" (the manifest's expected_fw_build_id form) or a number -> u32, else null.
+  function parseBuildId(v) {
+    var n = null;
+    if (typeof v === 'number' && isFinite(v)) n = v >>> 0;
+    else if (typeof v === 'string' && /^0x[0-9a-fA-F]{1,8}$/.test(v.trim())) n = parseInt(v.trim(), 16) >>> 0;
+    return n;
+  }
+  // The checks shelfInstall has always made before any wire traffic: size inside the
+  // firmware staging bounds, the magic, the fixed header size, and a declared payload
+  // length that accounts for every byte of the file. Pure; { ok } or { ok:false, code, message }.
+  function validateSector7Header(bytes) {
+    var len = bytes ? bytes.length : 0;
+    var r;
+    if (len < SHELF_MIN_IMAGE_SIZE || len > SHELF_MAX_IMAGE_SIZE) {
+      r = { ok: false, code: 'BAD_SIZE', message: 'Shelf image must be ' + SHELF_MIN_IMAGE_SIZE +
+        ' to ' + SHELF_MAX_IMAGE_SIZE + ' B; this file is ' + len + ' B.' };
+    } else if (u32le(bytes, 0) !== SHELF_MAGIC || u16le(bytes, 6) !== SHELF_HEADER_SIZE ||
+        u32le(bytes, 8) !== len - SHELF_HEADER_SIZE) {
+      r = { ok: false, code: 'BAD_HEADER', message: 'This file is not a sector-7 image: its header does not match its size.' };
+    } else {
+      r = { ok: true };
+    }
+    return r;
+  }
+  // Full pure check of a sector-7 file before it is written to the card: the header
+  // checks above, then layout version, payload kind, the exact feature set, the payload
+  // CRC, and the tooling dispatch record (magic, record size, a Thumb entry inside the
+  // tooling region). The tooling ABI is reported, not gated: the firmware compares it
+  // with its own. Optional opts.appVersion (tuning_shelf_app_version form,
+  // X1*1000000 + X2*10000 + X3*100 + X4) is checked against the app-compat window;
+  // optional opts.expectedBuildId (number or "0x..." string) against the file's build id.
+  // Returns { ok, code?, message?, layoutVersion, payloadLength, payloadCrc, featureFlags,
+  //   appCompatMin, appCompatMax, abiVersion, buildId } (fields present once parsed;
+  //   buildId is null for a file older than the first ABI carrying it).
+  function validateSector7File(bytes, opts) {
+    opts = opts || {};
+    var head = validateSector7Header(bytes);
+    var r = { ok: false };
+    if (!head.ok) {
+      r.code = head.code;
+      r.message = head.message;
+    } else {
+      r.layoutVersion = u16le(bytes, 4);
+      r.payloadLength = u32le(bytes, 8);
+      r.payloadCrc = u32le(bytes, 12);
+      r.payloadKind = u16le(bytes, 16);
+      r.featureFlags = u32le(bytes, 20);
+      r.appCompatMin = u32le(bytes, 24);
+      r.appCompatMax = u32le(bytes, 28);
+      var rec = SHELF_HEADER_SIZE + SHELF_TOOLING_OFFSET;
+      r.abiVersion = u16le(bytes, rec + 4);
+      r.buildId = r.abiVersion >= TOOLING_ABI_FIRST_WITH_BUILD_ID ? u32le(bytes, rec + 12) : null;
+      var entry = u32le(bytes, rec + 8);
+      var target = (entry & ~1) >>> 0;
+      var expected = opts.expectedBuildId != null ? parseBuildId(opts.expectedBuildId) : null;
+      if (r.layoutVersion !== SHELF_LAYOUT_VERSION || r.payloadKind !== SHELF_KIND_INTERNAL_TOOLING ||
+          r.featureFlags !== SHELF_REQUIRED_FEATURES) {
+        r.code = 'BAD_LAYOUT';
+        r.message = 'This sector-7 file has layout ' + r.layoutVersion + ', kind ' + r.payloadKind +
+          ', features 0x' + r.featureFlags.toString(16) + '; the firmware needs layout ' + SHELF_LAYOUT_VERSION +
+          ', kind ' + SHELF_KIND_INTERNAL_TOOLING + ', features 0x' + SHELF_REQUIRED_FEATURES.toString(16) + '.';
+      } else if (crc32(Array.prototype.slice.call(bytes, SHELF_HEADER_SIZE)) !== r.payloadCrc) {
+        r.code = 'BAD_CRC';
+        r.message = 'This sector-7 file is corrupt: its payload checksum does not match its header.';
+      } else if (u32le(bytes, rec) !== TOOLING_DISPATCH_MAGIC || u16le(bytes, rec + 6) !== TOOLING_DISPATCH_RECORD_BYTES ||
+          (entry & 1) === 0 || target < TOOLING_START_ADDR || target >= TOOLING_END_ADDR) {
+        r.code = 'BAD_TOOLING';
+        r.message = 'This sector-7 file has a malformed tooling record; the firmware would reject it.';
+      } else if (opts.appVersion != null && (opts.appVersion < r.appCompatMin || opts.appVersion > r.appCompatMax)) {
+        r.code = 'INCOMPATIBLE';
+        r.message = 'This sector-7 file supports app versions ' + r.appCompatMin + ' to ' + r.appCompatMax +
+          ', not ' + opts.appVersion + '.';
+      } else if (opts.expectedBuildId != null && (expected === null || r.buildId !== expected)) {
+        r.code = 'WRONG_BUILD';
+        r.message = 'This sector-7 file belongs to build ' + (r.buildId === null ? '(none)' : ('0x' + ('00000000' + r.buildId.toString(16).toUpperCase()).slice(-8))) +
+          ', not ' + String(opts.expectedBuildId) + '.';
+      } else {
+        r.ok = true;
+      }
+    }
+    return r;
   }
   // Returns { uid, serial } (serial null if the reply lacks the block or errored) or null
   // on a wire-level error.
@@ -5652,9 +5969,12 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
   // in edit mode (bound via connect(), ready for the caller to re-read the card exactly
   // like a manual connect); resolves null on timeout, no match, a match still in RUN
   // mode (entering edit mode for it would touch the mode), or a transport rejection.
+  // opts.mode 'run' instead binds the uid only once it answers in RUN mode (the
+  // two-file update's reconnect after its REBOOT; the module's mode is still untouched).
   Client.prototype.autoReconnect = function (uid, opts) {
     opts = opts || {};
     var self = this;
+    var wantMode = opts.mode === 'run' ? 'run' : 'edit';
     var windowMs = opts.windowMs != null ? opts.windowMs : 10000;
     var intervalMs = opts.intervalMs != null ? opts.intervalMs : 1000;
     var start = Date.now();
@@ -5665,7 +5985,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     function attempt() {
       return self.discover(opts.discoverOpts).then(function (mods) {
         var m = (mods || []).filter(function (x) { return x.uid === uid; })[0];
-        if (m && m.mode === 'edit') {
+        if (m && m.mode === wantMode) {
           return self.connect({ inId: m.inId, outId: m.outId }).then(function (info) {
             return { module: m, info: info };
           });
@@ -5967,6 +6287,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     this._expectedPortLoss = false;
     if (this.input) this.input.onmidimessage = null;
     this.input = null; this.output = null; this._rx = null; this._dropDup = null;
+    this._harnessSession = null;   // the module drops the session with the link
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
     var pending = this._pending; this._pending = null;
     var jobs = this._queue.splice(0); this._busy = false;
@@ -6034,6 +6355,18 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
 
   Client.prototype._dispatch = function (frameArr) {
     this._trace('rx', frameArr);   // log every complete inbound frame (dev mode only)
+    // Harness-family (0x7C) frames only ever settle a pending harness job (hello()), and
+    // only when its matcher accepts them; they never touch the 0x41 opcode matching or
+    // the straggler guard below.
+    if (frameArr.length > 3 && frameArr[3] === HARNESS_FAMILY) {
+      var hp = this._pending;
+      if (hp && hp.job.matchFrame && hp.job.matchFrame(frameArr)) {
+        clearTimeout(this._timer); this._timer = null;
+        var hjob = hp.job; this._pending = null;
+        this._finish(hjob, function () { hjob.resolve(frameArr); });
+      }
+      return;
+    }
     // Validate the fixed header before matching on the opcode byte data[4].
     if (frameArr.length < 6 ||
         frameArr[0] !== SYSEX.START || frameArr[1] !== SYSEX.MFG ||
@@ -6110,6 +6443,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
         timeout: opts.timeout != null ? opts.timeout : DEFAULT_TIMEOUT,
         retries: opts.retries != null ? opts.retries : DEFAULT_RETRIES,
         accept: opts.accept || null, maxDrops: opts.maxDrops,
+        matchFrame: opts.matchFrame || null, opName: opts.opName || null,
         attempt: 0, resolve: resolve, reject: reject,
       });
       self._pump();
@@ -6192,7 +6526,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
 
   Client.prototype._onTimeout = function (job) {
     this._timer = null; this._pending = null;
-    var opName = OP_NAME[job.expectOp] || ('0x' + (job.expectOp | 0).toString(16));
+    var opName = job.opName || OP_NAME[job.expectOp] || ('0x' + (job.expectOp | 0).toString(16));
     if (job.attempt < job.retries) {
       this._traceEvent('TIMEOUT ' + opName + ' (attempt ' + (job.attempt + 1) + ') - retrying');
       job.attempt++;
@@ -6215,6 +6549,169 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
 
   // ─── high-level config API (all return Promises) ────────────────
   function statusError(label, code, op) { return tcError('STATUS', label + ': ' + errMsg(code, op), { status: code }); }
+
+  // ─── hello() - harness capability probe (additive) ──────────────────────
+  // Sends ONE HELLO through the serial queue (so it never interleaves with a 0x41
+  // request) and waits a single bounded window, no retry. Resolves
+  //   { ok:true, caps, fwBuildId, mode:'booting'|'run'|'edit'|'unknown', modeCode, raw }
+  // on a well-formed RESP, else { ok:false, reason:'timeout'|'nack'|'malformed' }.
+  // Firmware predating the 0x7C family ignores the frame (timeout). expectOp is a
+  // sentinel no 0x41 frame can carry; the reply is taken only via matchFrame.
+  // Transport errors (not connected, send failure, disconnect) reject as for any op.
+  Client.prototype.hello = function (windowMs) {
+    var win = windowMs != null ? windowMs : HELLO_WINDOW_MS;
+    return this.sendAndAwait(reqHarnessHello(), -1, {
+      timeout: win, retries: 0, matchFrame: isHarnessHelloFrame, opName: 'HELLO',
+    }).then(parseHarnessHello, function (err) {
+      if (err && err.code === 'TIMEOUT') return { ok: false, reason: 'timeout' };
+      throw err;
+    });
+  };
+
+  // ─── harness session + card file write (second-file update, RUN mode) ────
+  // Next harness correlation TAG, 1..127 (never 0), so a late reply to an earlier
+  // request can never settle a later one.
+  Client.prototype._nextHarnessTag = function () {
+    this._harnessTag = ((this._harnessTag || 0) % 127) + 1;
+    return this._harnessTag;
+  };
+  // Send one harness REQ built by build(tag) through the serial queue and resolve with
+  // the parsed reply (parseHarnessReply). Transport errors reject as for any op.
+  Client.prototype._harnessRequest = function (opcode, build, opts) {
+    var tag = this._nextHarnessTag();
+    opts = opts || {};
+    return this.sendAndAwait(build(tag), -1, {
+      timeout: opts.timeout, retries: opts.retries, matchFrame: harnessReplyMatcher(opcode, tag),
+      opName: opts.opName || ('harness 0x' + opcode.toString(16)),
+    }).then(parseHarnessReply);
+  };
+
+  // openHarnessSession() -> Promise<{ token, runSig }>. Opens (or, when this client
+  // already holds one, idempotently re-opens with the same identity) the module's single
+  // harness session. Rejects HARNESS_NACK (e.g. BUSY while another tool holds it,
+  // nackDetail = holder age in seconds) or MALFORMED.
+  Client.prototype.openHarnessSession = function () {
+    var self = this;
+    var held = this._harnessSession;
+    var clientId = held ? held.clientId : HARNESS_EDITOR_CLIENT_ID;
+    var nonce = held ? held.nonce : ((Math.random() * 0x100000000) >>> 0);
+    return this._harnessRequest(HARNESS_OP_OPEN_SESSION, function (tag) {
+      return reqHarnessOpenSession(tag, clientId, nonce);
+    }, { opName: 'OPEN_SESSION' }).then(function (reply) {
+      var out;
+      if (!reply.ok || reply.payload.length < 9 || (reply.payload[4] & 0x7F) === 0) {
+        throw harnessNackError('OPEN_SESSION', reply.ok ? { malformed: true } : reply);
+      }
+      out = { token: reply.payload[4], runSig: dec32le(reply.payload.slice(5, 9)) };
+      self._harnessSession = { token: out.token, clientId: clientId, nonce: nonce };
+      return out;
+    });
+  };
+
+  // closeHarnessSession() -> Promise<{ ok:true, wasOpen }>. The client forgets the
+  // session whatever the reply; NO_SESSION (already closed or timed out on the module)
+  // counts as closed. Any other refusal rejects HARNESS_NACK.
+  Client.prototype.closeHarnessSession = function () {
+    var held = this._harnessSession;
+    var result;
+    if (!held) {
+      result = Promise.resolve({ ok: true, wasOpen: false });
+    } else {
+      this._harnessSession = null;
+      result = this._harnessRequest(HARNESS_OP_CLOSE_SESSION, function (tag) {
+        return reqHarnessCloseSession(tag, held.token);
+      }, { opName: 'CLOSE_SESSION' }).then(function (reply) {
+        if (!reply.ok && reply.nackReason !== HARNESS_NACK_NO_SESSION) throw harnessNackError('CLOSE_SESSION', reply);
+        return { ok: true, wasOpen: true };
+      });
+    }
+    return result;
+  };
+
+  // writeCardFile(name, bytes, { onProgress }) -> Promise<{ ok:true, name, bytes, crc32 }>.
+  // Writes one file to the module's card in RUN mode with harness FILE_WRITE:
+  // BEGIN, CHUNK (<= 128 B each) in order, COMMIT. The only name accepted is the
+  // reserved update file TC_FIRMWARE_B_2.DAT, mirroring the release image's carve-out
+  // (checked before any wire traffic, rejects BAD_NAME). Uses the session this client
+  // holds, or opens one and closes it afterwards. Any refusal (NACK, a wrong received
+  // count or a wrong committed CRC) sends ABORT so the module discards the partial temp
+  // file, then rejects with the cause (HARNESS_NACK carries step, nackReason,
+  // nackReasonName, nackDetail, offset). onProgress(sentBytes, totalBytes).
+  Client.prototype.writeCardFile = function (name, bytes, opts) {
+    var self = this;
+    opts = opts || {};
+    var onProgress = opts.onProgress || null;
+    var total = bytes ? bytes.length : 0;
+    var data = total ? Array.prototype.slice.call(bytes) : [];
+    var fileCrc = crc32(data);
+    var ownSession = !this._harnessSession;
+    var begun = false;
+    var outcome;
+    function token() { return self._harnessSession ? self._harnessSession.token : 0; }
+    function fileWrite(step, build, timeout, extra) {
+      return self._harnessRequest(HARNESS_OP_FILE_WRITE, build, { timeout: timeout, opName: 'FILE_WRITE ' + step })
+        .then(function (reply) {
+          if (!reply.ok) throw harnessNackError('FILE_WRITE ' + step, reply, extra);
+          return reply.payload;
+        });
+    }
+    function chunkFrom(off) {
+      var slice = data.slice(off, off + FILE_WRITE_CHUNK_MAX);
+      return fileWrite('CHUNK', function (tag) { return reqFileWriteChunk(tag, token(), off, slice); },
+        FILE_WRITE_CHUNK_TIMEOUT, { offset: off }).then(function (p) {
+        var next = off + slice.length;
+        var received = p.length >= 8 ? dec32le(p.slice(4, 8)) : -1;
+        if (received !== next) {
+          throw tcError('SEQUENCE', 'FILE_WRITE CHUNK @offset ' + off + ': the module reports ' + received +
+            ' B received, expected ' + next + ' B.', { step: 'FILE_WRITE CHUNK', offset: off });
+        }
+        if (onProgress) onProgress(next, total);
+        return next < total ? chunkFrom(next) : null;
+      });
+    }
+    function finish(err) {
+      var closing = ownSession ? self.closeHarnessSession().catch(function () { return null; }) : Promise.resolve(null);
+      return closing.then(function () {
+        if (err) throw err;
+        return { ok: true, name: name, bytes: total, crc32: fileCrc };
+      });
+    }
+    if (name !== FIELD_UPDATE_FILE_NAME) {
+      outcome = Promise.reject(tcError('BAD_NAME', 'Only ' + FIELD_UPDATE_FILE_NAME +
+        ' can be written to the card over this route; got ' + JSON.stringify(name) + '.'));
+    } else if (total < 1) {
+      outcome = Promise.reject(tcError('EMPTY', 'Empty file.'));
+    } else {
+      if (onProgress) onProgress(0, total);
+      outcome = (ownSession ? this.openHarnessSession() : Promise.resolve(null))
+        .then(function () {
+          return fileWrite('BEGIN', function (tag) { return reqFileWriteBegin(tag, token(), name, total, fileCrc); });
+        })
+        .then(function (p) {
+          if (p.length < 5 || p[4] !== 1) throw tcError('MALFORMED', 'FILE_WRITE BEGIN: the module did not accept the transfer.');
+          begun = true;
+          return chunkFrom(0);
+        })
+        .then(function () {
+          return fileWrite('COMMIT', function (tag) { return reqFileWriteCommit(tag, token()); }, FILE_WRITE_COMMIT_TIMEOUT);
+        })
+        .then(function (p) {
+          var got = p.length >= 8 ? dec32le(p.slice(4, 8)) : null;
+          if (got !== fileCrc) {
+            throw tcError('CRC_MISMATCH', 'FILE_WRITE COMMIT: the module committed CRC ' +
+              (got === null ? '(none)' : ('0x' + got.toString(16))) + ', expected 0x' + fileCrc.toString(16) + '.');
+          }
+          return finish(null);
+        }, function (err) {
+          var aborting = (begun && self._harnessSession && self.output)
+            ? self._harnessRequest(HARNESS_OP_FILE_WRITE, function (tag) { return reqFileWriteAbort(tag, token()); },
+              { opName: 'FILE_WRITE ABORT' }).catch(function () { return null; })
+            : Promise.resolve(null);
+          return aborting.then(function () { return finish(err); });
+        });
+    }
+    return outcome;
+  };
 
   // ─── probeMode() - classify which mode the device is in (additive) ──────
   // The firmware's USB SysEx dispatcher is live in NORMAL RUN MODE too
@@ -6376,6 +6873,7 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
   // moment a fresh connect attempt starts.
   Client.prototype.reboot = function () {
     this._expectedPortLoss = 'reboot';
+    this._harnessSession = null;   // a reset ends any harness session
     return this.sendAndAwait(reqReboot(), null);
   };
 
@@ -6927,23 +7425,10 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
   Client.prototype.shelfInstall = function (bytes, onProgress) {
     var self = this;
     var len = bytes.length;
-    if (len < SHELF_MIN_IMAGE_SIZE || len > SHELF_MAX_IMAGE_SIZE) {
-      return Promise.reject(tcError('BAD_SIZE', 'Shelf image must be ' + SHELF_MIN_IMAGE_SIZE +
-        ' to ' + SHELF_MAX_IMAGE_SIZE + ' B; this file is ' + len + ' B.'));
-    }
-    // Header check (tc_shelf_header_t): the magic, the fixed header size, and a declared
-    // payload length that accounts for every byte of the file. The device re-validates the
-    // whole image (CRC, kind, compatibility) at SHELF_COMMIT.
-    function u32(off) {
-      return ((bytes[off] & 0xFF) | ((bytes[off + 1] & 0xFF) << 8) |
-        ((bytes[off + 2] & 0xFF) << 16) | ((bytes[off + 3] & 0xFF) << 24)) >>> 0;
-    }
-    var headerSize = (bytes[6] & 0xFF) | ((bytes[7] & 0xFF) << 8);
-    if (u32(0) !== SHELF_MAGIC || headerSize !== SHELF_HEADER_SIZE ||
-        u32(8) !== len - SHELF_HEADER_SIZE) {
-      return Promise.reject(tcError('BAD_HEADER',
-        'This file is not a sector-7 image: its header does not match its size.'));
-    }
+    // Header check (tc_shelf_header_t), shared with the second-file path: the device
+    // re-validates the whole image (CRC, kind, compatibility) at SHELF_COMMIT.
+    var head = validateSector7Header(bytes);
+    if (!head.ok) return Promise.reject(tcError(head.code, head.message));
     function chunkAt(off) { return Array.prototype.slice.call(bytes, off, off + SHELF_CHUNK); }
     function sameHeader(record) {
       if (!record.valid || record.raw.length !== SHELF_HEADER_SIZE) return false;
@@ -7048,6 +7533,19 @@ return createPublicPolicy({"hidden":["447f580a42b3e795bea4d76003f339db57402deb93
     reqCfgEditArm: reqCfgEditArm, reqCfgEditConfirm: reqCfgEditConfirm, parseCfgEditArm: parseCfgEditArm,
     // Proof-based pairing + Identify (H283) - request builders exported for host tests.
     reqHostOverride: reqHostOverride, reqPaletteSetRgb: reqPaletteSetRgb, enc12: enc12,
+    // Capability probe (HELLO, harness 0x7C) - frame builder, parser and the pure gate.
+    reqHarnessHello: reqHarnessHello, parseHarnessHello: parseHarnessHello,
+    fieldUpdateCapable: fieldUpdateCapable,
+    // Second-file update (harness sessions + FILE_WRITE, RUN mode) and the sector-7 file check.
+    FIELD_UPDATE_FILE_NAME: FIELD_UPDATE_FILE_NAME, FILE_WRITE_CHUNK_MAX: FILE_WRITE_CHUNK_MAX,
+    FILE_WRITE_ARM: FILE_WRITE_ARM, HARNESS_NACK_NAME: HARNESS_NACK_NAME,
+    reqHarnessOpenSession: reqHarnessOpenSession, reqHarnessCloseSession: reqHarnessCloseSession,
+    reqFileWriteBegin: reqFileWriteBegin, reqFileWriteChunk: reqFileWriteChunk,
+    reqFileWriteCommit: reqFileWriteCommit, reqFileWriteAbort: reqFileWriteAbort,
+    parseHarnessReply: parseHarnessReply, harnessEncode7: harnessEncode7, crc32: crc32,
+    validateSector7Header: validateSector7Header, validateSector7File: validateSector7File,
+    parseBuildId: parseBuildId,
+    CAP_FILE_XFER: CAP_FILE_XFER, CAP_FIELD_UPDATE: CAP_FIELD_UPDATE,
   };
 })();
 
@@ -7207,7 +7705,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   // verbatim if present; the pattern-modulation performance key is one such
   // hidden key, 2026-09-28). SHIFT_BUTTON_ACTIONS is intentionally BARE
   // (firmware behaviour unverified - we assert nothing).
-  var LAYOUT = {"channels":[[{"keys":["TRACK_1_MIDI_INPUT_CHANNEL","TRACK_2_MIDI_INPUT_CHANNEL","TRACK_3_MIDI_INPUT_CHANNEL","TRACK_4_MIDI_INPUT_CHANNEL"]}],[{"keys":["TRACK_1_MIDI_OUTPUT_CHANNEL","TRACK_2_MIDI_OUTPUT_CHANNEL","TRACK_3_MIDI_OUTPUT_CHANNEL","TRACK_4_MIDI_OUTPUT_CHANNEL"]}],[{"keys":["MIDI_OMNI_CH","MIDI_OMNI_MODE"]},{"c":"When ON, a note on the omni channel triggers every track. Default is on.","keys":["MIDI_OMNI_TRIGGERING"]}]],"input":[[{"c":["How each track handles incoming MIDI notes. One of:","  TRACK_MIDI_KEYBOARD  play a scale degree of the chord, as if from the keyboard","  TRACK_MIDI_QUANTISE  snap notes to the track's chord or scale","  TRACK_MIDI_TO_CV     note to CV, with pitch passthrough"],"keys":["TRACK_1_MIDI_INPUT_HANDLING","TRACK_2_MIDI_INPUT_HANDLING","TRACK_3_MIDI_INPUT_HANDLING","TRACK_4_MIDI_INPUT_HANDLING"]}]],"cc":[[{"c":"CC number sent by each pot (0-127).","keys":["MIDI_CC_1","MIDI_CC_2","MIDI_CC_3","MIDI_CC_4","MIDI_CC_5","MIDI_CC_6","MIDI_CC_7","MIDI_CC_8"]}],[{"keys":["ROTARY_MIDI_CC"]},{"c":"The eight discrete CC values the rotary encoder sends.","keys":["ROT_1_VAL","ROT_2_VAL","ROT_3_VAL","ROT_4_VAL","ROT_5_VAL","ROT_6_VAL","ROT_7_VAL","ROT_8_VAL"]}],[{"c":["What each track's rotary sends: CC (default) or PROGRAM_CHANGE, the chosen value","as a Program Change number (0-127; patch 1 on a 1-128 synth is 0)."],"keys":["TRACK_1_ROTARY_SENDS","TRACK_2_ROTARY_SENDS","TRACK_3_ROTARY_SENDS","TRACK_4_ROTARY_SENDS"]}],[{"keys":["RESPOND_TO_MIDI_CC"]}]],"cv":[[{"c":"Calibration slot per CV output: FACTORY, CAL_1, CAL_2 ... CAL_8, ODESSA_HEL_CALIBRATION, or HZV_CALIBRATION.","keys":["CV_1_CAL","CV_2_CAL","CV_3_CAL","CV_4_CAL"]}],[{"keys":["REMEMBER_CALIBRATION_PER_SONG"]}],[{"c":["Tuning per progression: ON lets each of the eight progressions carry its own","tuning, applied on arrival. OFF keeps one tuning for the whole song."],"keys":["TUNING_PER_PROGRESSION"]}],[{"c":["Reference pitch in Hz, the pitch of A above middle C. Two decimals, so 415.30 is","baroque and 466.16 chorton; 440 is concert pitch. Above 440 the top notes may clip."],"keys":["REFERENCE_PITCH"]}]],"velocity":[[{"c":["What each CV output does with the velocity level when the note ends, while that","output is set to velocity. GATE (the default) drops it to zero volts at note-off;","CONTINUOUS leaves the last velocity level standing until the next note."],"keys":["CV_1_VELOCITY_MODE","CV_2_VELOCITY_MODE","CV_3_VELOCITY_MODE","CV_4_VELOCITY_MODE"]}],[{"c":"Also send note velocity out as MIDI Expression (CC 11), per track.","keys":["VELOCITY_TO_EXPRESSION_TRACK_1","VELOCITY_TO_EXPRESSION_TRACK_2","VELOCITY_TO_EXPRESSION_TRACK_3","VELOCITY_TO_EXPRESSION_TRACK_4"]}],[{"c":"Also send note velocity out as MIDI Dynamics (CC 1), per track.","keys":["VELOCITY_TO_DYNAMICS_TRACK_1","VELOCITY_TO_DYNAMICS_TRACK_2","VELOCITY_TO_DYNAMICS_TRACK_3","VELOCITY_TO_DYNAMICS_TRACK_4"]}]],"pc":[[{"c":["Keeps firmware older than 66522ec7 in Free Mapping, so it follows the channel A/B","lines below. Newer firmware ignores this line."],"keys":["MIDI_PC_PRESET"]}],[{"c":"Program Change channel A: receive / transmit and the channel for each (fixed, OMNI, or TRACK1).","keys":["MIDI_PC_A_RX","MIDI_PC_A_RX_CH","MIDI_PC_A_TX","MIDI_PC_A_TX_CH"]}],[{"c":["Channel A message maps: what each incoming/outgoing Bank Select MSB (CC#0), Bank","Select LSB (CC#32), and Program Change applies to / carries - one of SONG, PROG,","PATTERN, or NONE. The Program Change column also takes ELEKTRON_SYNC: one Program","Change = progression x 16 + pattern, the way Elektron gear numbers its patterns."],"keys":["MIDI_PC_RX_A_CC0","MIDI_PC_RX_A_CC32","MIDI_PC_RX_A_PC","MIDI_PC_TX_A_CC0","MIDI_PC_TX_A_CC32","MIDI_PC_TX_A_PC"]}],[{"c":"Program Change channel B: same shape as channel A, disabled by default.","keys":["MIDI_PC_B_RX","MIDI_PC_B_RX_CH","MIDI_PC_B_TX","MIDI_PC_B_TX_CH"]}],[{"c":"Channel B message maps: same shape as channel A.","keys":["MIDI_PC_RX_B_CC0","MIDI_PC_RX_B_CC32","MIDI_PC_RX_B_PC","MIDI_PC_TX_B_CC0","MIDI_PC_TX_B_CC32","MIDI_PC_TX_B_PC"]}],[{"c":["When an incoming Program Change restarts Track 1 playback: PATTERN_CHANGE (only on","a real pattern change) or EVERY_MSG (every accepted message)."],"keys":["MIDI_PC_PLAYBACK_RESET"]}]],"i2c":[[{"keys":["I2C_JUST_FRIENDS_SLEW"]},{"c":["ER-301 glide. ON: a note slides to its new pitch by the amount the chord slew pot","asks for, and in single-note (monophonic) mode the sliding note sounds on all of","the voices on the channel at once, the way Just Friends does it. OFF: every note","lands on pitch instantly and takes one voice at a time."],"keys":["I2C_ER_301_SLEW"]},{"c":["Reconnects I2C modules (Just Friends, Disting EX, Disting NT) after","power-up. Default off."],"keys":["I2C_AUTOCONNECT"]},{"c":["Which I2C channel each track sends Disting NT notes on (1-16). Set the matching","\"I2C channel\" on the NT note algorithm; no handshake. Default is track n -> ch n."],"keys":["I2C_NT_CHANNEL_TRACK_1","I2C_NT_CHANNEL_TRACK_2","I2C_NT_CHANNEL_TRACK_3","I2C_NT_CHANNEL_TRACK_4"]}]],"iml":[[{"c":"Which connection carries the link between modules: DIN, USB, or BOTH.","keys":["TC_LINK_CONNECTION_TYPE"]},{"c":["Song follows the link: ON makes a song load or save on one linked module do","the same slot on every linked module, from its own card."],"keys":["SONG_FOLLOWS_LINK"]}]],"system":[[{"c":"Preserve song state between power cycles.","keys":["RECALL_STATE"]},{"keys":["SHIFT_BUTTON_ACTIONS"]}],[{"c":"Hold SHIFT, then triple-tap RESET.","keys":["LIVE_REBOOT_BUTTON_COMBO"]},{"c":"Hardware watchdog. Automatically reboots the module when a fault is detected.","keys":["WATCHDOG"]}]],"patternmod":[],"scalerand":[[{"c":["On a user-initiated song reset, land on one random scale song-wide instead of","all-C-major (both tetrachords uniform over 6 types, root over 12); boot and song","load never randomise. The pool below draws tetrachord 2's start: 5 / b5 / 4."],"keys":["SCALE_RANDOMISE","SCALE_RAND_FIFTH_5","SCALE_RAND_FIFTH_B5","SCALE_RAND_FIFTH_4"]}]],"tuningrand":[[{"c":["On a user-initiated song reset, draw a random tuning from one random enabled","bank below, independently of the scale randomiser above. No enabled bank means","no tuning change."],"keys":["TUNING_RANDOMISE","TUNING_RAND_SLOT_0","TUNING_RAND_SLOT_1","TUNING_RAND_SLOT_2","TUNING_RAND_SLOT_3","TUNING_RAND_SLOT_4","TUNING_RAND_SLOT_5","TUNING_RAND_SLOT_6"]}]],"rhythmsequencer":[],"midi":[],"mts":[[{"c":["MIDI Tuning Standard transmit. ON carries the tuning as MTS SysEx instead of","pitch bend; OFF (default) uses pitch bend. Best for a tuning you set and play in."],"keys":["MTS_TX"]},{"c":["Per track, per socket, while MTS is on: whether that track's tuning leaves as MTS","on USB and on DIN. USB defaults ON, DIN defaults OFF. A socket sending MTS sends no","pitch bend there; a socket not sending MTS bends exactly as it does today. MTS over","DIN is for fixed (non-dynamic) tunings only and blocks the cable ~174 ms on a push."],"keys":["MTS_TX_T1_USB","MTS_TX_T1_DIN","MTS_TX_T2_USB","MTS_TX_T2_DIN","MTS_TX_T3_USB","MTS_TX_T3_DIN","MTS_TX_T4_USB","MTS_TX_T4_DIN"]},{"c":["Played-notes MTS: ON tunes each note just before it plays, so the synth only holds","tunings for notes this module actually played; OFF (default) pushes the full keyboard."],"keys":["MTS_TX_PLAYED_NOTES"]}]],"mpe":[[{"c":"MPE pitch-bend range in semitones, applied to every track: 12, 24, 48 or 96. Default 48.","keys":["MPE_PITCH_SENSITIVITY"]}]],"strum":[[{"c":["Strum choke only. TRIGGER (default): a trigger plays the whole strum.","GATE: the strum plays only while the gate is held high; releasing early stops","the notes still to come."],"keys":["STRUM_CHOKE_RESPONSE"]},{"c":["Default strum mode (no-SHIFT gesture). FREE (default): CHORD alone is","strum free, SHIFT+CHORD strum choke. CHOKE swaps them; nothing is stored."],"keys":["DEFAULT_STRUM_MODE"]}]],"transpose":[[{"c":["RELATIVE: with TRACK or PROGRESSION held, the encoder shifts the musical mode","of every pattern in scope by the same relative amount. Interval relationships","between patterns are maintained. ABSOLUTE: the encoder sets every pattern in","scope to the same musical mode."],"keys":["GLOBAL_TRANSPOSE"]}]],"quantiser":[[{"c":["Select with MOD, then tap the encoder button. FREE: notes are triggered","automatically as the CV input is swept. SAMPLE_HOLD: notes are triggered by","the track's trigger input."],"keys":["QUANTISER_MOD"]},{"c":["Select with MOD, then SHIFT + STEP SEQ/KEYBOARD. FREE: notes are triggered","automatically as the CV input is swept. TRACK_HOLD: notes are triggered by","the track's trigger input."],"keys":["KEYBOARD_MOD"]}]]};
+  var LAYOUT = {"channels":[[{"keys":["TRACK_1_MIDI_INPUT_CHANNEL","TRACK_2_MIDI_INPUT_CHANNEL","TRACK_3_MIDI_INPUT_CHANNEL","TRACK_4_MIDI_INPUT_CHANNEL"]}],[{"keys":["TRACK_1_MIDI_OUTPUT_CHANNEL","TRACK_2_MIDI_OUTPUT_CHANNEL","TRACK_3_MIDI_OUTPUT_CHANNEL","TRACK_4_MIDI_OUTPUT_CHANNEL"]}],[{"keys":["MIDI_OMNI_CH","MIDI_OMNI_MODE"]},{"c":"When ON, a note on the omni channel triggers every track. Default is on.","keys":["MIDI_OMNI_TRIGGERING"]}]],"input":[[{"c":["How each track handles incoming MIDI notes. One of:","  TRACK_MIDI_KEYBOARD  play a scale degree of the chord, as if from the keyboard","  TRACK_MIDI_QUANTISE  snap notes to the track's chord or scale","  TRACK_MIDI_TO_CV     note to CV, with pitch passthrough"],"keys":["TRACK_1_MIDI_INPUT_HANDLING","TRACK_2_MIDI_INPUT_HANDLING","TRACK_3_MIDI_INPUT_HANDLING","TRACK_4_MIDI_INPUT_HANDLING"]}]],"cc":[[{"c":"CC number sent by each pot (0-127).","keys":["MIDI_CC_1","MIDI_CC_2","MIDI_CC_3","MIDI_CC_4","MIDI_CC_5","MIDI_CC_6","MIDI_CC_7","MIDI_CC_8"]}],[{"keys":["ROTARY_MIDI_CC"]},{"c":"The eight discrete CC values the rotary encoder sends.","keys":["ROT_1_VAL","ROT_2_VAL","ROT_3_VAL","ROT_4_VAL","ROT_5_VAL","ROT_6_VAL","ROT_7_VAL","ROT_8_VAL"]}],[{"c":["What each track's rotary sends: CC (default) or PROGRAM_CHANGE, the chosen value","as a Program Change number (0-127; patch 1 on a 1-128 synth is 0)."],"keys":["TRACK_1_ROTARY_SENDS","TRACK_2_ROTARY_SENDS","TRACK_3_ROTARY_SENDS","TRACK_4_ROTARY_SENDS"]}],[{"keys":["RESPOND_TO_MIDI_CC"]}]],"cv":[[{"c":"Calibration slot per CV output: FACTORY, CAL_1, CAL_2 ... CAL_8, ODESSA_HEL_CALIBRATION, or HZV_CALIBRATION.","keys":["CV_1_CAL","CV_2_CAL","CV_3_CAL","CV_4_CAL"]}],[{"keys":["REMEMBER_CALIBRATION_PER_SONG"]}],[{"c":["Tuning per progression: ON lets each of the eight progressions carry its own","tuning, applied on arrival. OFF keeps one tuning for the whole song."],"keys":["TUNING_PER_PROGRESSION"]}],[{"c":["Reference pitch in Hz, the pitch of A above middle C. Two decimals, so 415.30 is","baroque and 466.16 chorton; 440 is concert pitch. Above 440 the top notes may clip."],"keys":["REFERENCE_PITCH"]}]],"velocity":[[{"c":["What each CV output does with the velocity level when the note ends, while that","output is set to velocity. GATE (the default) drops it to zero volts at note-off;","CONTINUOUS leaves the last velocity level standing until the next note."],"keys":["CV_1_VELOCITY_MODE","CV_2_VELOCITY_MODE","CV_3_VELOCITY_MODE","CV_4_VELOCITY_MODE"]}],[{"c":"Also send note velocity out as MIDI Expression (CC 11), per track.","keys":["VELOCITY_TO_EXPRESSION_TRACK_1","VELOCITY_TO_EXPRESSION_TRACK_2","VELOCITY_TO_EXPRESSION_TRACK_3","VELOCITY_TO_EXPRESSION_TRACK_4"]}],[{"c":"Also send note velocity out as MIDI Dynamics (CC 1), per track.","keys":["VELOCITY_TO_DYNAMICS_TRACK_1","VELOCITY_TO_DYNAMICS_TRACK_2","VELOCITY_TO_DYNAMICS_TRACK_3","VELOCITY_TO_DYNAMICS_TRACK_4"]}]],"pc":[[{"c":["Keeps firmware older than 66522ec7 in Free Mapping, so it follows the channel A/B","lines below. Newer firmware ignores this line."],"keys":["MIDI_PC_PRESET"]}],[{"c":"Program Change channel A: receive / transmit and the channel for each (fixed, OMNI, or TRACK1).","keys":["MIDI_PC_A_RX","MIDI_PC_A_RX_CH","MIDI_PC_A_TX","MIDI_PC_A_TX_CH"]}],[{"c":["Channel A message maps: what each incoming/outgoing Bank Select MSB (CC#0), Bank","Select LSB (CC#32), and Program Change applies to / carries - one of SONG, PROG,","PATTERN, or NONE. The Program Change column also takes ELEKTRON_SYNC."],"keys":["MIDI_PC_RX_A_CC0","MIDI_PC_RX_A_CC32","MIDI_PC_RX_A_PC","MIDI_PC_TX_A_CC0","MIDI_PC_TX_A_CC32","MIDI_PC_TX_A_PC"]}],[{"c":"Program Change channel B: same shape as channel A, disabled by default.","keys":["MIDI_PC_B_RX","MIDI_PC_B_RX_CH","MIDI_PC_B_TX","MIDI_PC_B_TX_CH"]}],[{"c":"Channel B message maps: same shape as channel A.","keys":["MIDI_PC_RX_B_CC0","MIDI_PC_RX_B_CC32","MIDI_PC_RX_B_PC","MIDI_PC_TX_B_CC0","MIDI_PC_TX_B_CC32","MIDI_PC_TX_B_PC"]}],[{"c":["When an incoming Program Change restarts Track 1 playback: PATTERN_CHANGE (only on","a real pattern change) or EVERY_MSG (every accepted message)."],"keys":["MIDI_PC_PLAYBACK_RESET"]}]],"i2c":[[{"keys":["I2C_JUST_FRIENDS_SLEW"]},{"c":["ER-301 glide. ON: a note slides to its new pitch by the amount the chord slew pot","asks for, and in single-note (monophonic) mode the sliding note sounds on all of","the voices on the channel at once, the way Just Friends does it. OFF: every note","lands on pitch instantly and takes one voice at a time."],"keys":["I2C_ER_301_SLEW"]},{"c":["Reconnects I2C modules (Just Friends, Disting EX, Disting NT) after","power-up. Default off."],"keys":["I2C_AUTOCONNECT"]},{"c":["Which I2C channel each track sends Disting NT notes on (1-16). Set the matching","\"I2C channel\" on the NT note algorithm; no handshake. Default is track n -> ch n."],"keys":["I2C_NT_CHANNEL_TRACK_1","I2C_NT_CHANNEL_TRACK_2","I2C_NT_CHANNEL_TRACK_3","I2C_NT_CHANNEL_TRACK_4"]}]],"iml":[[{"c":"Which connection carries the link between modules: DIN, USB, or BOTH.","keys":["TC_LINK_CONNECTION_TYPE"]},{"c":["Song follows the link: ON makes a song load or save on one linked module do","the same slot on every linked module, from its own card."],"keys":["SONG_FOLLOWS_LINK"]}]],"system":[[{"c":"Preserve song state between power cycles.","keys":["RECALL_STATE"]},{"keys":["SHIFT_BUTTON_ACTIONS"]}],[{"c":"Hold SHIFT, then triple-tap RESET.","keys":["LIVE_REBOOT_BUTTON_COMBO"]},{"c":"Hardware watchdog. Automatically reboots the module when a fault is detected.","keys":["WATCHDOG"]}]],"patternmod":[],"scalerand":[[{"c":["On a user-initiated song reset, land on one random scale song-wide instead of","all-C-major (both tetrachords uniform over 6 types, root over 12); boot and song","load never randomise. The pool below draws tetrachord 2's start: 5 / b5 / 4."],"keys":["SCALE_RANDOMISE","SCALE_RAND_FIFTH_5","SCALE_RAND_FIFTH_B5","SCALE_RAND_FIFTH_4"]}]],"tuningrand":[[{"c":["On a user-initiated song reset, draw a random tuning from one random enabled","bank below, independently of the scale randomiser above. No enabled bank means","no tuning change."],"keys":["TUNING_RANDOMISE","TUNING_RAND_SLOT_0","TUNING_RAND_SLOT_1","TUNING_RAND_SLOT_2","TUNING_RAND_SLOT_3","TUNING_RAND_SLOT_4","TUNING_RAND_SLOT_5","TUNING_RAND_SLOT_6"]}]],"rhythmsequencer":[],"midi":[],"mts":[[{"c":["MIDI Tuning Standard transmit. ON carries the tuning as MTS SysEx instead of","pitch bend; OFF (default) uses pitch bend. Best for a tuning you set and play in."],"keys":["MTS_TX"]},{"c":["Per track, per socket, while MTS is on: whether that track's tuning leaves as MTS","on USB and on DIN. USB defaults ON, DIN defaults OFF. A socket sending MTS sends no","pitch bend there; a socket not sending MTS bends exactly as it does today. MTS over","DIN is for fixed (non-dynamic) tunings only and blocks the cable ~174 ms on a push."],"keys":["MTS_TX_T1_USB","MTS_TX_T1_DIN","MTS_TX_T2_USB","MTS_TX_T2_DIN","MTS_TX_T3_USB","MTS_TX_T3_DIN","MTS_TX_T4_USB","MTS_TX_T4_DIN"]},{"c":["Played-notes MTS: ON tunes each note just before it plays, so the synth only holds","tunings for notes this module actually played; OFF (default) pushes the full keyboard."],"keys":["MTS_TX_PLAYED_NOTES"]}]],"mpe":[[{"c":"MPE pitch-bend range in semitones, applied to every track: 12, 24, 48 or 96. Default 48.","keys":["MPE_PITCH_SENSITIVITY"]}]],"strum":[[{"c":["Strum choke only. TRIGGER (default): a trigger plays the whole strum.","GATE: the strum plays only while the gate is held high; releasing early stops","the notes still to come."],"keys":["STRUM_CHOKE_RESPONSE"]},{"c":["Default strum mode (no-SHIFT gesture). FREE (default): CHORD alone is","strum free, SHIFT+CHORD strum choke. CHOKE swaps them; nothing is stored."],"keys":["DEFAULT_STRUM_MODE"]}]],"transpose":[[{"c":["RELATIVE: with TRACK or PROGRESSION held, the encoder shifts the musical mode","of every pattern in scope by the same relative amount. Interval relationships","between patterns are maintained. ABSOLUTE: the encoder sets every pattern in","scope to the same musical mode."],"keys":["GLOBAL_TRANSPOSE"]}]],"quantiser":[[{"c":["Select with MOD, then tap the encoder button. FREE: notes are triggered","automatically as the CV input is swept. SAMPLE_HOLD: notes are triggered by","the track's trigger input."],"keys":["QUANTISER_MOD"]},{"c":["Select with MOD, then SHIFT + STEP SEQ/KEYBOARD. FREE: notes are triggered","automatically as the CV input is swept. TRACK_HOLD: notes are triggered by","the track's trigger input."],"keys":["KEYBOARD_MOD"]}]]};
   // model = { records:[{key,kind,lo,hi}], values:{}, committed:{}, present:{},
   //           raw:string, legacyKey:{canonical->legacySource} }
   // The one prominent warning the commented export carries in the file itself, so
@@ -7826,16 +8324,21 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
 
   const MAPOPTS = [['song', 'Song'], ['prog', 'Progression'], ['pattern', 'Pattern'], ['none', 'None']];
   // The Program Change column also offers Elektron sync (B214, owner ruling
-  // 2026-09-27): one Program Change = progression x 16 + pattern, the Elektron
-  // bank/pattern numbering. Never offered in a Bank Select (CC#0 / CC#32) column.
+  // 2026-09-27), in the Elektron bank/pattern numbering. Mapping per owner ruling
+  // 2026-09-28 (voice, supersedes B214's progression x 16 + pattern): Elektron
+  // bank = song, Elektron pattern = progression. Never offered in a Bank Select
+  // (CC#0 / CC#32) column.
   const PC_MAPOPTS = [...MAPOPTS, ['elektron_sync', 'Elektron sync']];
-  // Elektron sync packing (firmware pc_pack_pp / pc_unpack_pp): progression x 16 +
-  // pattern; a received value is accepted only when value % 16 < 8 (ignore-not-clamp).
+  // Elektron sync packing (firmware pc_elektron_pack / pc_elektron_unpack): song x 16
+  // + progression. Songs 9-96 (index >= 8) have no Elektron bank: pack returns null
+  // and nothing is sent. A received value is accepted only when value % 16 < 8
+  // (ignore-not-clamp).
   const ELEKTRON_SYNC_STRIDE = 16;
-  const elektronSyncPack = (prog, pattern) => prog * ELEKTRON_SYNC_STRIDE + pattern;
+  const ELEKTRON_BANKS = BANK_LETTERS.length;
+  const elektronSyncPack = (song, prog) => (song < ELEKTRON_BANKS ? song * ELEKTRON_SYNC_STRIDE + prog : null);
   function elektronSyncUnpack(value) {
-    const pattern = value % ELEKTRON_SYNC_STRIDE;
-    return pattern < PATS ? { prog: Math.floor(value / ELEKTRON_SYNC_STRIDE), pattern } : null;
+    const prog = value % ELEKTRON_SYNC_STRIDE;
+    return (value < 128 && prog < PROGS) ? { song: Math.floor(value / ELEKTRON_SYNC_STRIDE), prog } : null;
   }
 
   // resolve a config object against a device's defaults (config is the full superset array)
@@ -7853,7 +8356,13 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     if (!landed) return null;
     const parts = [];
     if (landed.song != null) parts.push(`Song ${landed.song}`);
-    if (landed.prog != null) parts.push((opts.bankLetters ? `Bank ${BANK_LETTERS[landed.prog] || '?'}` : `Prog ${landed.prog}`));
+    if (opts.bankLetters) {
+      // Elektron: bank carried on the song key, pattern on the prog key (1-based).
+      if (landed.song != null) parts.push(`Bank ${BANK_LETTERS[landed.song] || '?'}`);
+      if (landed.prog != null) parts.push(`Pattern ${landed.prog + 1}`);
+      return parts.length ? parts.join(' · ') : null;
+    }
+    if (landed.prog != null) parts.push(`Prog ${landed.prog}`);
     if (landed.pattern != null) parts.push(`Pattern ${landed.pattern}`);
     return parts.length ? parts.join(' · ') : null;
   }
@@ -7887,21 +8396,23 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     short: 'Elektron',
     blurb: 'One channel, bare Program Change - PC = bank×16 + pattern. No bank select.',
     txrx: 'Transmits AND receives this flat PC format (set PROG CH SEND / RECEIVE on the device).',
-    axes: [axProg('Bank', 8, ah), axPat('Pattern', 16, num1)],
+    // Elektron bank = Tetrachords song, Elektron pattern = Tetrachords progression
+    // (owner ruling 2026-09-28), so a chain with an Elektron sync column lines up.
+    axes: [{ key: 'song', label: 'Bank', count: 8, fmt: ah, render: 'pad' }, axProg('Pattern', 16, num1)],
     config: [chCfg('channel', 'Auto channel', 10, 'The Elektron "Auto Channel". Default 10. All PC traffic rides this one channel.')],
     configurable: ['Auto channel (1–16)', 'PROG CH SEND on/off', 'PROG CH RECEIVE on/off'],
-    intentOf: (sel) => ({ prog: sel.prog, pattern: sel.pattern }),
+    intentOf: (sel) => ({ song: sel.song, prog: sel.prog }),
     encode(sel, cfg) {
       const c = withDefaults(this, cfg), ch = c.channel - 1;
-      const pc = sel.prog * 16 + sel.pattern;
+      const pc = sel.song * 16 + sel.prog;
       return { messages: [PC(ch, pc, { label: 'Program Change' })],
-        notes: [`Bank ${BANK_LETTERS[sel.prog]} Pat ${sel.pattern + 1} → flat PC = ${pc}  (bank×16 + pattern)`, 'Bare PC - no CC#0, no CC#32'] };
+        notes: [`Bank ${BANK_LETTERS[sel.song]} Pat ${sel.prog + 1} → flat PC = ${pc}  (bank×16 + pattern)`, 'Bare PC - no CC#0, no CC#32'] };
     },
     decode(stream, cfg, intent) {
       const c = withDefaults(this, cfg), ch = c.channel - 1; const events = []; let landed = null;
       for (const m of stream) {
         if (m.channel !== ch) { events.push({ m, accepted: false, why: `ch ${m.channel + 1} - not the auto channel` }); continue; }
-        if (m.kind === 'PC') { landed = { prog: m.program >> 4, pattern: m.program & 15 }; events.push({ m, accepted: true, note: `PC ${m.program} → bank ${BANK_LETTERS[m.program >> 4]}, pat ${(m.program & 15) + 1}` }); }
+        if (m.kind === 'PC') { landed = { song: m.program >> 4, prog: m.program & 15 }; events.push({ m, accepted: true, note: `PC ${m.program} → bank ${BANK_LETTERS[m.program >> 4]}, pat ${(m.program & 15) + 1}` }); }
         else events.push({ m, accepted: false, why: 'Elektron ignores CC - bare PC only' });
       }
       return { events, landed, status: verdict(landed, intent), listenLabel: `ch ${c.channel}`,
@@ -8139,7 +8650,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     name: 'Tetrachords',
     short: 'Tetrachords',
     isTetra: true,
-    blurb: 'Two channels map Bank Select MSB (CC#0), Bank Select LSB (CC#32) and Program Change each to song, progression, pattern, or none; the Program Change column also offers Elektron sync (progression x 16 + pattern). One channel by default: CC#0 to song, CC#32 to progression, Program Change to pattern. Out-of-range values are ignored. Elektron sync needs firmware 66522ec7 or later; older firmware ignores it and keeps that column\'s default.',
+    blurb: 'Two channels map Bank Select MSB (CC#0), Bank Select LSB (CC#32) and Program Change each to song, progression, pattern, or none; the Program Change column also offers Elektron sync. One channel by default: CC#0 to song, CC#32 to progression, Program Change to pattern. Out-of-range values are ignored. Elektron sync needs firmware 66522ec7 or later; older firmware ignores it and keeps that column\'s default.',
     txrx: 'Transmits and receives per the channel mappings. RX defaults on; TX is a per-channel toggle.',
     axes(cfg) {
       return [axSong('Song'), axProg('Progression', 8, num), axPat('Pattern', 8, num)];
@@ -8193,7 +8704,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       const byKey = {}; this.config.forEach((c) => { byKey[c.key] = c; });
       return [{ ...byKey.A_rxCh, label: 'RX ch' }];
     },
-    configurable: ['Bank Select MSB (CC#0), Bank Select LSB (CC#32) and Program Change per channel: song, progression, pattern, or none', 'Elektron sync in the Program Change column (progression x 16 + pattern)', 'RX + TX toggle per channel', 'Channel: 1–16, OMNI, or Track 1', 'Playback reset (every message / pattern change)', 'Out of range ignored'],
+    configurable: ['Bank Select MSB (CC#0), Bank Select LSB (CC#32) and Program Change per channel: song, progression, pattern, or none', 'Elektron sync in the Program Change column', 'RX + TX toggle per channel', 'Channel: 1–16, OMNI, or Track 1', 'Playback reset (every message / pattern change)', 'Out of range ignored'],
     // Incoming-message slots the mappings LISTEN for - the mirror of encode().
     // Each slot fixes the message type + controller (implied by the mapping) and
     // exposes only the fillable values: which channel it arrives on and its data
@@ -8206,8 +8717,8 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       // Each rx-enabled channel exposes CC#0 / CC#32 / PC per its role map.
       // A message mapped to NONE is shown but inert (its value changes nothing).
       const roleName = { song: 'song', prog: 'progression', pattern: 'pattern', none: 'none' };
-      const slotValue = (role) => (role === 'elektron_sync' ? elektronSyncPack(D.prog, D.pattern) : D[role]);
-      const slotMaps = (role) => (role === 'elektron_sync' ? '→ Elektron sync (progression x 16 + pattern)' : '→ ' + roleName[role]);
+      const slotValue = (role) => (role === 'elektron_sync' ? elektronSyncPack(D.song, D.prog) : D[role]);
+      const slotMaps = (role) => (role === 'elektron_sync' ? '→ Elektron sync' : '→ ' + roleName[role]);
       const s = [];
       const addChannel = (who, on, chSetting, map) => {
         if (!on) return;
@@ -8236,13 +8747,15 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         if (role === 'song') return sel.song;
         if (role === 'prog') return sel.prog;
         if (role === 'pattern') return sel.pattern;
-        if (role === 'elektron_sync') return elektronSyncPack(sel.prog, sel.pattern);
+        if (role === 'elektron_sync') return elektronSyncPack(sel.song, sel.prog);
         return null;
       };
-      // Elektron sync carries progression AND pattern in one Program Change.
+      // Elektron sync carries song AND progression in one Program Change.
       const pcSem = (role) => (role === 'elektron_sync'
-        ? { multi: [{ role: 'prog', val: sel.prog }, { role: 'pattern', val: sel.pattern }] }
+        ? { multi: [{ role: 'song', val: sel.song }, { role: 'prog', val: sel.prog }] }
         : { role, val: roleValue(role) });
+      // Songs 9-96 have no Elektron bank: an Elektron sync column sends nothing.
+      const pcSends = (role) => role !== 'none' && roleValue(role) != null;
       const messages = []; const notes = [];
       const customChannels = [
         { name: 'A', tx: c.A_tx, txCh: c.A_txCh, cc0: c.txA_cc0, cc32: c.txA_cc32, pc: c.txA_pc },
@@ -8255,7 +8768,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         targets.forEach((channel0) => {
           if (channel.cc0 !== 'none') { messages.push(CC(channel0, 0, roleValue(channel.cc0), { label: 'Bank Select MSB', sem: { role: channel.cc0, val: roleValue(channel.cc0) } })); emitted = true; }
           if (channel.cc32 !== 'none') { messages.push(CC(channel0, 32, roleValue(channel.cc32), { label: 'Bank Select LSB', sem: { role: channel.cc32, val: roleValue(channel.cc32) } })); emitted = true; }
-          if (channel.pc !== 'none') { messages.push(PC(channel0, roleValue(channel.pc), { label: 'Program Change', sem: pcSem(channel.pc) })); emitted = true; }
+          if (pcSends(channel.pc)) { messages.push(PC(channel0, roleValue(channel.pc), { label: 'Program Change', sem: pcSem(channel.pc) })); emitted = true; }
         });
         if (emitted) {
           const parts = [channel.cc0 !== 'none' && `CC#0→${channel.cc0}`, channel.cc32 !== 'none' && `CC#32→${channel.cc32}`, channel.pc !== 'none' && `PC→${channel.pc}`].filter(Boolean);
@@ -8282,9 +8795,9 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       if (role === 'none') { events.push({ m, accepted: false, why: `${label} mapped to NONE - ignored` }); return; }
       if (role === 'elektron_sync') {
         const unpacked = elektronSyncUnpack(value);
-        if (!unpacked) { events.push({ m, accepted: false, why: `${label} ${value} → Elektron sync pattern ${value % ELEKTRON_SYNC_STRIDE} out of range, ignored` }); return; }
-        landed = { ...landed, prog: unpacked.prog, pattern: unpacked.pattern };
-        events.push({ m, accepted: true, note: `${label} ${value} → Elektron sync: prog ${unpacked.prog}, pattern ${unpacked.pattern}`, sem: { multi: [{ role: 'prog', val: unpacked.prog }, { role: 'pattern', val: unpacked.pattern }] } });
+        if (!unpacked) { events.push({ m, accepted: false, why: `${label} ${value} → Elektron sync progression ${value % ELEKTRON_SYNC_STRIDE} out of range, ignored` }); return; }
+        landed = { ...landed, song: unpacked.song, prog: unpacked.prog };
+        events.push({ m, accepted: true, note: `${label} ${value} → Elektron sync: song ${unpacked.song}, prog ${unpacked.prog}`, sem: { multi: [{ role: 'song', val: unpacked.song }, { role: 'prog', val: unpacked.prog }] } });
         return;
       }
       if (!inRange(value, maxOf[role])) { events.push({ m, accepted: false, why: `${role} ${value} out of range, ignored` }); return; }
@@ -8493,7 +9006,6 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     { product: "Ableton Live", cc0: "Bank", cc32: "Sub Bank", pc: "Program Change" },
     { product: "Logic Pro", cc0: "Bank (upper value)", cc32: "Bank (lower value)", pc: "Program" }
   ];
-  const ELEKTRON_SYNC_EXAMPLE = { progression: 2, pattern: 3, bank: "B", pc: 18 };
   const SIM_OPEN_KEY = "tc-pc-sim-open";
   function HeadNamesModal({ open, onClose }) {
     useEffect(() => {
@@ -8505,7 +9017,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       return () => document.removeEventListener("keydown", onKey);
     }, [open]);
     if (!open) return null;
-    return /* @__PURE__ */ React.createElement("div", { className: "tc-modal-back", onClick: onClose, role: "dialog", "aria-modal": "true", "aria-label": "Different manufacturers give these messages different names." }, /* @__PURE__ */ React.createElement("div", { className: "tc-modal tc-pc-names", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "tc-modal-head" }, /* @__PURE__ */ React.createElement("span", null, "Different manufacturers give these messages different names."), /* @__PURE__ */ React.createElement("div", { className: "tc-modal-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "tc-btn-mini ghost", onClick: onClose }, "Close"))), /* @__PURE__ */ React.createElement("div", { className: "mv-pc-names-body" }, /* @__PURE__ */ React.createElement("table", { className: "mv-pc-names-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null), /* @__PURE__ */ React.createElement("th", null, HEAD.cc0[0]), /* @__PURE__ */ React.createElement("th", null, HEAD.cc32[0]), /* @__PURE__ */ React.createElement("th", null, HEAD.pc[0]))), /* @__PURE__ */ React.createElement("tbody", null, OTHER_NAMES.map((row) => /* @__PURE__ */ React.createElement("tr", { key: row.product }, /* @__PURE__ */ React.createElement("td", null, row.product), /* @__PURE__ */ React.createElement("td", null, row.cc0), /* @__PURE__ */ React.createElement("td", null, row.cc32), /* @__PURE__ */ React.createElement("td", null, row.pc))))), /* @__PURE__ */ React.createElement("p", { className: "mv-pc-names-elektron" }, "Elektron's sync protocol uses one Program Change message to specify both bank and pattern. Choose ", /* @__PURE__ */ React.createElement("i", null, "Elektron sync"), " as the Program Change option, and Tetrachords progressions and patterns line up with Elektron banks and patterns."), /* @__PURE__ */ React.createElement("table", { className: "mv-pc-names-elektron-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null, "Tetrachords"), /* @__PURE__ */ React.createElement("th", null, "Elektron"))), /* @__PURE__ */ React.createElement("tbody", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", null, "Progression"), /* @__PURE__ */ React.createElement("td", null, "Bank")), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", null, "Pattern"), /* @__PURE__ */ React.createElement("td", null, "Pattern")), /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("td", null, "Progression ", ELEKTRON_SYNC_EXAMPLE.progression, ", pattern ", ELEKTRON_SYNC_EXAMPLE.pattern), /* @__PURE__ */ React.createElement("td", null, "Bank ", ELEKTRON_SYNC_EXAMPLE.bank, ", pattern ", ELEKTRON_SYNC_EXAMPLE.pattern, " (Program Change ", ELEKTRON_SYNC_EXAMPLE.pc, ")")))))));
+    return /* @__PURE__ */ React.createElement("div", { className: "tc-modal-back", onClick: onClose, role: "dialog", "aria-modal": "true", "aria-label": "Different manufacturers give these messages different names." }, /* @__PURE__ */ React.createElement("div", { className: "tc-modal tc-pc-names", onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement("div", { className: "tc-modal-head" }, /* @__PURE__ */ React.createElement("span", null, "Different manufacturers give these messages different names."), /* @__PURE__ */ React.createElement("div", { className: "tc-modal-actions" }, /* @__PURE__ */ React.createElement("button", { type: "button", className: "tc-btn-mini ghost", onClick: onClose }, "Close"))), /* @__PURE__ */ React.createElement("div", { className: "mv-pc-names-body" }, /* @__PURE__ */ React.createElement("table", { className: "mv-pc-names-table" }, /* @__PURE__ */ React.createElement("thead", null, /* @__PURE__ */ React.createElement("tr", null, /* @__PURE__ */ React.createElement("th", null), /* @__PURE__ */ React.createElement("th", null, HEAD.cc0[0]), /* @__PURE__ */ React.createElement("th", null, HEAD.cc32[0]), /* @__PURE__ */ React.createElement("th", null, HEAD.pc[0]))), /* @__PURE__ */ React.createElement("tbody", null, OTHER_NAMES.map((row) => /* @__PURE__ */ React.createElement("tr", { key: row.product }, /* @__PURE__ */ React.createElement("td", null, row.product), /* @__PURE__ */ React.createElement("td", null, row.cc0), /* @__PURE__ */ React.createElement("td", null, row.cc32), /* @__PURE__ */ React.createElement("td", null, row.pc))))), /* @__PURE__ */ React.createElement("p", { className: "mv-pc-names-elektron" }, "Elektron's sync protocol uses one Program Change message to specify both bank and pattern."))));
   }
   function CustomChannels({ dev, cfg, setCfg }) {
     const items = M.getConfig(dev, cfg);
@@ -9036,7 +9548,6 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   window.MidiVizEditor = MidiVizEditor;
   window.MidiVizHeadNames = HEAD;
   window.MidiVizOtherNames = OTHER_NAMES;
-  window.MidiVizElektronSyncExample = ELEKTRON_SYNC_EXAMPLE;
   window.MidiVizCustomChannels = CustomChannels;
   window.MidiVizHeadNamesModal = HeadNamesModal;
   window.MidiVizMigrateSaved = migrate;
@@ -9512,6 +10023,9 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
 
   var S = window.TC_SCHEMA;
   var M = window.TCMidi;
+  // CRC-32/zlib (poly 0xEDB88320, init/final XOR 0xFFFFFFFF), matching the firmware's
+  // crc32_calculate: the one copy lives in midi-client.js (TCMidi.crc32).
+  var crc32 = M.crc32;
   var TC = S.TRACK_COLORS;
   var STORE = 'tc-sdconfig-v1';
   // Plain whole-number kinds. Kind 10 (FIXED2, TT36) is numeric too but renders
@@ -9738,6 +10252,96 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   // Download the current card as CONFIG.TXT (verbatim bytes, hidden lines kept).
   var DOWNLOAD_LABEL = 'Download config.txt';
   var DOWNLOAD_FILENAME = 'CONFIG.TXT';
+
+  // Pre-connect modal and manual (offline) mode - every user-facing string in one
+  // place so the owner can change the wording without hunting (owner spec
+  // 2026-09-29). SCAFFOLD: most wording in this block is placeholder pending the
+  // owner's words; the two confirm strings exist only so the dialogs are not
+  // blank (an empty confirm() showed nothing). notConnectedHeader, manualOnlyTitle
+  // and manualBody are owner-dictated (voice, 2026-09-29) and are final, not
+  // placeholder.
+  var PRECONNECT_TEXT = {
+    usbTitle: 'USB',
+    usbBody: 'Plug in Tetrachords by USB and press Connect to edit its configuration.',
+    connect: 'Connect',
+    retry: 'Retry',
+    notConnectedHeader: 'Not connected', // owner-dictated 2026-09-29
+    manualTitle: 'Manual',
+    manualOnlyTitle: 'SD Config Editor', // owner-dictated 2026-09-29
+    manualBody: 'Load an existing config.txt file or press New to start with the default configuration.', // owner-dictated 2026-09-29
+    load: 'Load',
+    newFile: 'New',
+    revert: 'Revert',
+    download: 'Download config.txt',
+    downloadFilename: 'config.txt',
+    revertConfirm: 'Discard your edits and revert?',
+    leaveManualConfirm: 'Leave manual editing? Unsaved edits will be lost.',
+  };
+
+  // Firmware update steps, shown inside the FIRMWARE UPDATE panel. `steps` is the
+  // owner's own wording copied verbatim from the manual chapter
+  // (tools/tc-web-manual/src/content/chapters/firmware-update.mdx, steps 1, 3, 4
+  // and 5; step 2, placing the .bin on the card by hand, is what the editor does
+  // instead, so it is left out). Each step is a list of paragraphs. `twoFiles` is
+  // the one added line (coordinator brief 2026-09-29), using the owner's nouns
+  // "the firmware file" and "the second file" (owner 2026-09-29).
+  var FW_UPDATE_TEXT = {
+    steps: [
+      ['Power off the module.', 'Remove any CV, MIDI, USB or i2c connections.'],
+      ['Whilst holding down the SHIFT and TRACK 1 buttons, power up the Tetrachords.', 'Once the module powers up, release SHIFT and TRACK 1.'],
+      ['Press the green RGB button to update.', 'Press the red RGB button to boot up without updating the firmware.'],
+      ['Wait for the firmware to update. It should take about 20 seconds.',
+        "Don't turn off the power, plug anything in or otherwise interact with the module whilst it is updating.",
+        'The progress of the update is represented on the LED ring.',
+        'Tetrachords will reboot once the update process is complete.'],
+    ],
+    twoFiles: 'An update writes two files: the firmware file and the second file.',
+    installed: 'installed',
+    update: 'Update',
+    // SCAFFOLD: everything below in this object is placeholder wording for the
+    // two-file push (coordinator brief 2026-09-29), pending the owner's words.
+    // {name} placeholders are filled by fwText().
+    installNote: 'The first normal start after the update installs the second file. If it does not match, the LEDs show red.',
+    pushSteps: [
+      { id: 'check', label: 'Download and check both files' },
+      { id: 'firmware', label: 'Write the firmware file' },
+      { id: 'restart', label: 'Restart the module' },
+      { id: 'reconnect', label: 'Reconnect' },
+      { id: 'second', label: 'Write the second file' },
+    ],
+    pushDone: 'Both files are on the card. To install the update:',
+    pushFailed: 'The update stopped.',
+    pushFailedFirmwareOnCard: 'The new firmware file is already on the card. Finish the update (retry) before doing the SHIFT and TRACK 1 install, or the module will show red at start.',
+    retrySecond: 'Try the second file again',
+    close: 'Close',
+    busyConnect: 'A firmware update is in progress.',
+    unsavedTitle: 'Unsaved changes',
+    unsavedBody: 'Write your edits to the card before the update, or discard them.',
+    unsavedWrite: 'Write to card and update',
+    unsavedDiscard: 'Discard and update',
+    unsavedCancel: 'Cancel',
+    unsavedWriteFailed: 'Some edits were rejected, so the update did not start.',
+    errDownload: 'Could not download {file}.',
+    errSha: '{file} does not match its published checksum.',
+    errNoCrypto: 'This browser cannot check the files: {detail}',
+    errFirmwareFile: '{file} is not a usable firmware file: {detail}',
+    errSecondFile: '{file} is not a usable second file: {detail}',
+    errVersion: 'Version {version} cannot be written as a firmware file name.',
+    errPackage: 'This package is missing a file.',
+    errUid: 'Could not read the module\'s id: {detail}',
+    errFirmwareWrite: 'Writing the firmware file failed: {detail}',
+    errFirmwareVerify: 'The firmware file on the card did not check out, so it was discarded: {detail}',
+    errRestart: 'Could not restart the module: {detail}',
+    errReconnect: 'The module did not come back after the restart. Unplug and replug it, then press "Try the second file again".',
+    errNotRun: 'After the restart the module reported {mode} mode, not normal (RUN) mode.',
+    errNotCapable: 'After the restart the module does not accept update files over USB.',
+    errNoHello: 'After the restart the module did not answer.',
+    errSecondWrite: 'Writing the second file failed: {detail}',
+  };
+  // Fill {name} placeholders in an FW_UPDATE_TEXT string.
+  function fwText(template, vars) {
+    return String(template).replace(/\{(\w+)\}/g, function (m, k) { return vars && vars[k] != null ? String(vars[k]) : m; });
+  }
 
   // Commented hand-editing copy (owner rulings q-h127-1 / q-h127-4, 2026-08-12).
   // A hand-editor asks the editor to generate the settings file WITH full help
@@ -9972,6 +10576,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     MIGRATION_BODY_2: MIGRATION_BODY_2, MIGRATION_NOTE: MIGRATION_NOTE,
     DISCONNECT_TITLE: DISCONNECT_TITLE, DISCONNECT_BODY: DISCONNECT_BODY, DISCONNECT_NOTE: DISCONNECT_NOTE,
     DOWNLOAD_LABEL: DOWNLOAD_LABEL, DOWNLOAD_FILENAME: DOWNLOAD_FILENAME,
+    PRECONNECT_TEXT: PRECONNECT_TEXT, FW_UPDATE_TEXT: FW_UPDATE_TEXT,
     RUN_MODE_CHIP: RUN_MODE_CHIP, RUN_MODE_TITLE: RUN_MODE_TITLE, RUN_MODE_MSG: RUN_MODE_MSG,
     CONNECT_TIMEOUT_HINT: CONNECT_TIMEOUT_HINT, NO_DEVICE_MSG: NO_DEVICE_MSG, REBOOT_TOAST_MSG: REBOOT_TOAST_MSG,
     connectFailureUi: connectFailureUi,   // pure (error, probe) -> {conn,msg}; exposed for host tests
@@ -9989,7 +10594,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     scalaSlotModel: scalaSlotModel,   // pure fileNames -> {slots,warnings}; exposed for host tests
     songSlotModel: songSlotModel,   // pure records[] (+crcBySlot) -> 96-entry grid model; exposed for host tests
     rotaryProgramChangeConflicts: rotaryProgramChangeConflicts,   // pure values -> [warning]; exposed for host tests
-    crc32: crc32,   // pure CRC-32/zlib; exposed for host tests
+    crc32: crc32,   // the same function as TCMidi.crc32 (one copy); exposed for host tests
     songBackupFilename: songBackupFilename,   // pure slot+label -> sanitized backup filename; exposed for host tests
     songSlotLabel: songSlotLabel,   // pure slot -> "A1".."L8" grid-locator label; exposed for host tests
     songBankDisplayName: songBankDisplayName,   // pure bank -> "Bank 1".."Bank 12"; exposed for host tests
@@ -10040,7 +10645,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       FirmwareUpdatePanel: FirmwareUpdatePanel,
       ReadOnlyCardPanel: ReadOnlyCardPanel, DevPanel: DevPanel,
       TopBar: TopBar, ConnChip: ConnChip, ConnectBanner: ConnectBanner,
-      ActionBar: ActionBar, DisconnectModal: DisconnectModal,
+      ActionBar: ActionBar, DisconnectModal: DisconnectModal, PreconnectModal: PreconnectModal,
     },
   };
 
@@ -10127,6 +10732,68 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   var SIM_SECTIONS = buildSections(SIM_RECORDS);
   var SIM_DEFAULTS = defaultsFor(SIM_SECTIONS);
 
+  // ─── pre-connect modal + manual (offline) mode (owner spec 2026-09-29) ─────
+  // Pure: which sections the pre-connect modal shows. Decided once at mount from
+  // the transport's own Web MIDI guard (M.Client.prototype.hasWebMidi). Without
+  // Web MIDI there is no USB route at all, so only Manual shows.
+  function preconnectModel(opts) {
+    var webMidi = !!(opts && opts.webMidi);
+    return { showUsb: webMidi, showManual: true };
+  }
+
+  // Pure: a config.txt text -> the same loaded shape loadFromCard returns for a
+  // card, through the SAME population core a card READ_RAW goes through
+  // (M.classifyCardValues). The records are the full schema overlay (SIM_RECORDS)
+  // - with no device there is no LIST_KEYS, and this is exactly the record set
+  // tools/release/gen_default_config.js composes factory defaults from.
+  function manualLoadedFromText(text) {
+    var raw = text == null ? '' : String(text);
+    var cls = M.classifyCardValues(SIM_RECORDS, raw);
+    return {
+      sections: SIM_SECTIONS, committed: cls.committed, present: cls.present, readonly: cls.readonly || [],
+      legacyKey: cls.legacyKey || {}, pcMigration: cls.pcMigration || null, raw: raw, records: SIM_RECORDS,
+      needsMigration: C.needsMigration({ legacyKey: cls.legacyKey, pcMigration: cls.pcMigration }),
+    };
+  }
+
+  // Pure: the canonical compose of a manual-mode model (the file Download writes).
+  function manualComposeText(loaded, values) {
+    return C.composeCanonicalText({
+      records: loaded.records, committed: loaded.committed, values: values || loaded.committed,
+      present: loaded.present, raw: loaded.raw, legacyKey: loaded.legacyKey, pcMigration: loaded.pcMigration,
+    });
+  }
+
+  // Pure: factory-default config.txt, composed in the browser exactly the way
+  // tools/release/gen_default_config.js does it (composeCanonicalText on an empty
+  // card). Oracle: tests/config-editor-web/factory-default-config.txt.
+  function factoryDefaultConfigText() {
+    return manualComposeText(manualLoadedFromText(''));
+  }
+
+  // Pure: a manual session plus its loaded model. source 'defaults' (New) or 'file'
+  // (Load); baselineText is what Revert rebuilds from.
+  function manualSessionFromText(source, text, fileName) {
+    var baselineText = text == null ? '' : String(text);
+    return {
+      session: { kind: 'manual', source: source, baselineText: baselineText, fileName: fileName || '' },
+      loaded: manualLoadedFromText(baselineText),
+    };
+  }
+  function manualNewSession() { return manualSessionFromText('defaults', factoryDefaultConfigText(), ''); }
+  function manualRevertSession(session) { return manualSessionFromText(session.source, session.baselineText, session.fileName); }
+  // Pure: what a manual-mode Revert click does - same shape as disconnectClickPath.
+  function manualRevertPath(hasUnsavedEdits) { return hasUnsavedEdits ? 'confirm' : 'revert'; }
+
+  window.TCEditorUtil.preconnectModel = preconnectModel;
+  window.TCEditorUtil.manualLoadedFromText = manualLoadedFromText;
+  window.TCEditorUtil.manualComposeText = manualComposeText;
+  window.TCEditorUtil.factoryDefaultConfigText = factoryDefaultConfigText;
+  window.TCEditorUtil.manualSessionFromText = manualSessionFromText;
+  window.TCEditorUtil.manualNewSession = manualNewSession;
+  window.TCEditorUtil.manualRevertSession = manualRevertSession;
+  window.TCEditorUtil.manualRevertPath = manualRevertPath;
+
   function loadStore() { try { return JSON.parse(localStorage.getItem(STORE) || 'null') || {}; } catch (e) { return {}; } }
 
   // The persisted draft cache (STORE) shape - pure so host tests can pin the
@@ -10141,6 +10808,14 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     };
   }
 
+  function readFileText(file) {
+    return new Promise(function (res, rej) {
+      var r = new FileReader();
+      r.onload = function () { res(String(r.result == null ? '' : r.result)); };
+      r.onerror = function () { rej(r.error || new Error('read failed')); };
+      r.readAsText(file);
+    });
+  }
   function readFileBytes(file) {
     return new Promise(function (res, rej) {
       var r = new FileReader();
@@ -10782,7 +11457,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         // bottom of CV Calibration - it was its own rail entry/panel ('cal',
         // CalLibraryPanel) until now. Same badge + summary + modal, just no
         // longer a separate screen.
-        sec.id === 'cv' ? ce(CalLibraryBlock, { live: props.calLive, entries: props.calEntries, busy: props.calBusy, onOpen: props.onOpenCal }) : null)
+        (sec.id === 'cv' && !props.calOff) ? ce(CalLibraryBlock, { live: props.calLive, entries: props.calEntries, busy: props.calBusy, onOpen: props.onOpenCal }) : null)
     );
   }
 
@@ -10930,29 +11605,6 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       });
     }
     return out;
-  }
-
-  // Pure: CRC-32/zlib (the standard poly 0xEDB88320, init/final XOR 0xFFFFFFFF) -
-  // matches the firmware's crc32_calculate_hw / software fallback (plan §Firmware
-  // slice: "must match a JS reimplementation (standard CRC-32/zlib)"). Used to
-  // verify a downloaded backup against the on-demand SONG_CRC reply.
-  var _crc32Table = null;
-  function crc32Table() {
-    if (!_crc32Table) {
-      var t = new Array(256);
-      for (var n = 0; n < 256; n++) {
-        var c = n;
-        for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-        t[n] = c >>> 0;
-      }
-      _crc32Table = t;
-    }
-    return _crc32Table;
-  }
-  function crc32(bytes) {
-    var t = crc32Table(), c = 0xFFFFFFFF;
-    for (var i = 0; i < bytes.length; i++) c = t[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
-    return (c ^ 0xFFFFFFFF) >>> 0;
   }
 
   // Pure: slot -> the device-side "SONG_NNN" base name (1-indexed, 3-digit; slot 0
@@ -12757,6 +13409,284 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     return quad;
   }
 
+  // ─── firmware update: capability gate + package list (pure) ─────────
+  // The gate is ONE live HELLO answer after a USB connection goes live - never
+  // card files. Any transport rejection (disconnect, send failure) is simply
+  // "not capable"; a legacy module that ignores HELLO resolves {ok:false,
+  // reason:'timeout'} and is not capable either.
+  function fwGateFromHello(helloResult) {
+    var capable = !!(M && typeof M.fieldUpdateCapable === 'function' && M.fieldUpdateCapable(helloResult));
+    var buildId = (helloResult && helloResult.ok === true && typeof helloResult.fwBuildId === 'number')
+      ? (helloResult.fwBuildId >>> 0) : null;
+    return { capable: capable, buildId: buildId };
+  }
+  // client -> Promise<{capable, buildId}>; never rejects.
+  function probeFwGate(client, windowMs) {
+    var out;
+    if (!client || typeof client.hello !== 'function') {
+      out = Promise.resolve({ capable: false, buildId: null });
+    } else {
+      out = Promise.resolve().then(function () { return client.hello(windowMs); })
+        .then(fwGateFromHello, function () { return { capable: false, buildId: null }; });
+    }
+    return out;
+  }
+  // A build id as a u32 number: a number passes through; a hex string such as
+  // "0x04BE881F" (identity.expected_fw_build_id) is parsed; anything else is null.
+  function parseFwBuildId(v) {
+    var out = null;
+    if (typeof v === 'number' && isFinite(v) && v >= 0 && v === Math.floor(v)) out = v >>> 0;
+    else if (typeof v === 'string' && /^0x[0-9a-f]{1,8}$/i.test(v.trim())) out = parseInt(v.trim().slice(2), 16) >>> 0;
+    return out;
+  }
+  // Does this package's firmware file carry the build id the module reported?
+  function isInstalledPackage(pkg, fwBuildId) {
+    var want = parseFwBuildId(fwBuildId);
+    var have = parseFwBuildId(pkg && pkg.identity ? pkg.identity.expected_fw_build_id : null);
+    return want != null && have != null && want === have;
+  }
+  // Distinct channels in first-seen order (a package with no channel counts as 'beta',
+  // make-manifest.mjs's only value today).
+  function packageChannels(packages) {
+    var out = [];
+    (Array.isArray(packages) ? packages : []).forEach(function (p) {
+      var c = (p && p.channel) || 'beta';
+      if (out.indexOf(c) < 0) out.push(c);
+    });
+    return out;
+  }
+  // The beta/release toggle renders only when there is a choice to make.
+  function showChannelToggle(packages) { return packageChannels(packages).length > 1; }
+  // Newest first by date (ISO strings compare lexically), stable for equal dates;
+  // optionally narrowed to one channel.
+  function packagesForView(packages, channel) {
+    var list = (Array.isArray(packages) ? packages : []).map(function (p, i) { return { p: p, i: i }; });
+    if (channel) list = list.filter(function (x) { return ((x.p && x.p.channel) || 'beta') === channel; });
+    list.sort(function (a, b) {
+      var da = String((a.p && a.p.date) || ''), db = String((b.p && b.p.date) || '');
+      var r = da < db ? 1 : (da > db ? -1 : 0);
+      return r !== 0 ? r : a.i - b.i;
+    });
+    return list.map(function (x) { return x.p; });
+  }
+  // Manifest v2 (packages[]) when present and non-empty; else the old releases[] path.
+  function manifestHasPackages(manifest) {
+    return !!(manifest && Array.isArray(manifest.packages) && manifest.packages.length > 0);
+  }
+
+  // ─── firmware update: the two-file push (driver, no React) ──────────
+  // A package (manifest packages[] row) is pushed in this order:
+  //   check     fetch both files, verify each sha256 against the manifest, run
+  //             FW.validateImage on the firmware file and validateSector7File on
+  //             the second file (expected build id and app version from the
+  //             package). Any failure stops here, before a single frame is sent.
+  //   firmware  edit mode: FW_ARM, FW_WRITE*, FW_CRC with the package's version
+  //             quad - the card now holds tetrachords_<quad>.bin.
+  //   restart   REBOOT (0x16). The module starts on the OLD firmware in RUN mode;
+  //             no new second file is on the card yet, so nothing installs.
+  //   reconnect find the same module by unique id in RUN mode, then HELLO: it
+  //             must report RUN mode and the field-update capabilities.
+  //   second    FILE_WRITE of TC_FIRMWARE_B_2.DAT (session opened and closed by
+  //             writeCardFile). FIELD_UPDATE_TRIGGER 0x57 is never sent.
+  // The firmware file goes first so no normal start of the old firmware ever
+  // happens with the new second file on the card. A failed second file can be
+  // retried on its own (retryPackageSecondFile); the firmware file stays staged.
+  var FW_PUSH_STEP_IDS = ['check', 'firmware', 'restart', 'reconnect', 'second'];
+
+  // Mirrors the firmware's config_fw_filename (Core/Src/config_edit_wire.c): the
+  // digits it can name a firmware file with. FW_CRC NACKs BAD_VERSION otherwise.
+  function fwQuadNameable(quad) {
+    return !!(quad && quad.length === 4 &&
+      quad[0] >= 1 && quad[0] <= 6 && quad[1] >= 1 && quad[1] <= 6 &&
+      quad[2] >= 1 && quad[2] <= 7 && quad[3] >= 1 && quad[3] <= 7);
+  }
+  // tuning_shelf_app_version form: X1*1000000 + X2*10000 + X3*100 + X4.
+  function fwAppVersion(quad) { return quad[0] * 1000000 + quad[1] * 10000 + quad[2] * 100 + quad[3]; }
+
+  function FwPushStop(step, message, retry) { this.step = step; this.message = message; this.retry = !!retry; }
+  function fwErrDetail(e) { return (e && e.message) || String(e); }
+
+  // Pure-ish: fetch and check both files of a package. No wire traffic.
+  // hooks.fetchBytes(url) -> Promise<Uint8Array>; hooks.sha256Hex(bytes) -> Promise<hex>.
+  // Resolves { quad, fwBytes (padded to 32), fwCrc, s7Bytes }; rejects FwPushStop('check').
+  function checkPackageFiles(pkg, hooks) {
+    var fw = (pkg && pkg.firmware) || null, s7 = (pkg && pkg.sector7) || null;
+    var expectedBuildId = pkg && pkg.identity ? pkg.identity.expected_fw_build_id : null;
+    var quad = parseVersionQuad(pkg && pkg.version);
+    var sha = hooks.sha256Hex || FW.sha256Hex;
+    function stop(msg) { throw new FwPushStop('check', msg, false); }
+    function fetchChecked(entry) {
+      return Promise.resolve().then(function () { return hooks.fetchBytes(entry.url); }).then(null, function () {
+        stop(fwText(FW_UPDATE_TEXT.errDownload, { file: entry.file }));
+      }).then(function (bytes) {
+        return sha(bytes).then(null, function (e) {
+          stop(fwText(FW_UPDATE_TEXT.errNoCrypto, { detail: fwErrDetail(e) }));
+        }).then(function (hex) {
+          if (String(hex).toLowerCase() !== String(entry.sha256 || '').toLowerCase()) stop(fwText(FW_UPDATE_TEXT.errSha, { file: entry.file }));
+          return bytes;
+        });
+      });
+    }
+    return Promise.resolve().then(function () {
+      if (!fw || !s7 || !fw.url || !s7.url || !fw.sha256 || !s7.sha256 || expectedBuildId == null) stop(FW_UPDATE_TEXT.errPackage);
+      if (!fwQuadNameable(quad)) stop(fwText(FW_UPDATE_TEXT.errVersion, { version: pkg.version }));
+      return fetchChecked(fw);
+    }).then(function (fwBytes) {
+      return fetchChecked(s7).then(function (s7Bytes) { return { fwBytes: fwBytes, s7Bytes: s7Bytes }; });
+    }).then(function (files) {
+      var v = FW.validateImage(files.fwBytes);
+      if (!v.ok) stop(fwText(FW_UPDATE_TEXT.errFirmwareFile, { file: fw.file, detail: v.errors.join(' ') }));
+      var sv = M.validateSector7File(files.s7Bytes, { appVersion: fwAppVersion(quad), expectedBuildId: expectedBuildId });
+      if (!sv.ok) stop(fwText(FW_UPDATE_TEXT.errSecondFile, { file: s7.file, detail: sv.message }));
+      var padded = FW.padTo32(files.fwBytes);
+      return { quad: quad, fwBytes: padded, fwCrc: crc32(padded), s7Bytes: files.s7Bytes };
+    });
+  }
+
+  // Find module ctx.uid again in RUN mode after a REBOOT. Waits (bounded) for the
+  // old binding to drop first, so the old ports are never re-bound mid-reset.
+  // A fresh binding needs a fresh HELLO check (ctx.helloOk cleared).
+  function fwPushRebind(ctx) {
+    var client = ctx.client, opts = ctx.opts || {};
+    var dropWaitMs = opts.dropWaitMs != null ? opts.dropWaitMs : 3000;
+    var start = Date.now();
+    function waitDrop() {
+      if (!client.isConnected() || Date.now() - start >= dropWaitMs) return Promise.resolve();
+      return new Promise(function (r) { setTimeout(r, 50); }).then(waitDrop);
+    }
+    ctx.helloOk = false;
+    return waitDrop().then(function () {
+      return client.autoReconnect(ctx.uid, { mode: 'run', windowMs: opts.reconnectWindowMs != null ? opts.reconnectWindowMs : 30000,
+        intervalMs: opts.reconnectIntervalMs, discoverOpts: opts.discoverOpts });
+    }).then(function (res) {
+      if (!res) throw new FwPushStop('reconnect', FW_UPDATE_TEXT.errReconnect, true);
+    }, function () {
+      throw new FwPushStop('reconnect', FW_UPDATE_TEXT.errReconnect, true);
+    });
+  }
+  // HELLO on the bound module: RUN mode and the field-update capabilities, or stop.
+  // recoverEdit (retry path only, hop bounded to one extra round-trip): a manual
+  // reconnect following the errReconnect scaffold text can land the module in
+  // EDIT mode rather than RUN mode - that is recoverable without asking the
+  // owner to do anything else, so REBOOT (accepted in any mode) then rebind and
+  // recheck once, instead of stopping dead on "not RUN mode". Any other
+  // non-run mode, or a second EDIT answer after the one recovery hop, still
+  // stops with its reason.
+  function fwPushHelloCheck(ctx, recoverEdit, hop) {
+    hop = hop || 0;
+    return ctx.client.hello().then(null, function () {
+      throw new FwPushStop('reconnect', FW_UPDATE_TEXT.errNoHello, true);
+    }).then(function (h) {
+      if (!h || !h.ok) throw new FwPushStop('reconnect', FW_UPDATE_TEXT.errNoHello, true);
+      if (h.mode === 'edit' && recoverEdit && hop === 0) {
+        return ctx.client.reboot().then(function () { return fwPushRebind(ctx); })
+          .then(function () { return fwPushHelloCheck(ctx, recoverEdit, hop + 1); });
+      }
+      if (h.mode !== 'run') throw new FwPushStop('reconnect', fwText(FW_UPDATE_TEXT.errNotRun, { mode: h.mode }), false);
+      if (!M.fieldUpdateCapable(h)) throw new FwPushStop('reconnect', FW_UPDATE_TEXT.errNotCapable, false);
+      ctx.helloOk = true;
+    });
+  }
+
+  function fwPushSecond(ctx, hooks) {
+    hooks.onStep('second', { state: 'active', sent: 0, total: ctx.s7Bytes.length, error: null });
+    return ctx.client.writeCardFile(M.FIELD_UPDATE_FILE_NAME, ctx.s7Bytes, {
+      onProgress: function (sent, total) { hooks.onStep('second', { sent: sent, total: total }); },
+    }).then(function () {
+      hooks.onStep('second', { state: 'done' });
+    }, function (e) {
+      throw new FwPushStop('second', fwText(FW_UPDATE_TEXT.errSecondWrite, { detail: fwErrDetail(e) }), true);
+    });
+  }
+
+  // Settle a push chain into { ok, step?, message?, retry, ctx }; a failure is
+  // reported on its step through hooks.onStep(step, { state:'failed', error }).
+  function fwPushSettle(chain, ctx, hooks, current) {
+    return chain.then(function () {
+      return { ok: true, retry: false, ctx: ctx };
+    }, function (e) {
+      var stop = e instanceof FwPushStop ? e : new FwPushStop(current.step, fwErrDetail(e), false);
+      hooks.onStep(stop.step, { state: 'failed', error: stop.message });
+      return { ok: false, step: stop.step, message: stop.message, retry: stop.retry, ctx: ctx };
+    });
+  }
+
+  // runPackagePush(pkg, client, hooks, opts) -> Promise<result> (never rejects).
+  // hooks: { onStep(stepId, patch), fetchBytes(url), sha256Hex? }; patch fields
+  // state ('active'|'done'|'failed'), sent, total, error. opts: { uid? (else read
+  // over UID_READ before the firmware file), dropWaitMs, reconnectWindowMs,
+  // reconnectIntervalMs, discoverOpts }.
+  function runPackagePush(pkg, client, hooks, opts) {
+    opts = opts || {};
+    var ctx = { client: client, uid: opts.uid || null, s7Bytes: null, opts: opts, helloOk: false };
+    var current = { step: 'check' };
+    function begin(id, extra) { current.step = id; hooks.onStep(id, Object.assign({ state: 'active', error: null }, extra || {})); }
+    begin('check');
+    var chain = checkPackageFiles(pkg, hooks).then(function (files) {
+      ctx.s7Bytes = files.s7Bytes;
+      hooks.onStep('check', { state: 'done' });
+      begin('firmware', { sent: 0, total: files.fwBytes.length });
+      var uidP = ctx.uid ? Promise.resolve(ctx.uid) : client.readUid().then(null, function (e) {
+        throw new FwPushStop('firmware', fwText(FW_UPDATE_TEXT.errUid, { detail: fwErrDetail(e) }), false);
+      });
+      return uidP.then(function (uid) {
+        ctx.uid = uid;
+        return client.fwStage(files.fwBytes, function (sent, total) { hooks.onStep('firmware', { sent: sent, total: total }); })
+          .then(null, function (e) { throw new FwPushStop('firmware', fwText(FW_UPDATE_TEXT.errFirmwareWrite, { detail: fwErrDetail(e) }), false); });
+      }).then(function () {
+        return client.fwCommit(files.quad, files.fwCrc)
+          .then(null, function (e) { throw new FwPushStop('firmware', fwText(FW_UPDATE_TEXT.errFirmwareVerify, { detail: fwErrDetail(e) }), false); });
+      });
+    }).then(function () {
+      hooks.onStep('firmware', { state: 'done' });
+      begin('restart');
+      return client.reboot().then(null, function (e) {
+        throw new FwPushStop('restart', fwText(FW_UPDATE_TEXT.errRestart, { detail: fwErrDetail(e) }), false);
+      });
+    }).then(function () {
+      hooks.onStep('restart', { state: 'done' });
+      begin('reconnect');
+      return fwPushRebind(ctx).then(function () { return fwPushHelloCheck(ctx); });
+    }).then(function () {
+      hooks.onStep('reconnect', { state: 'done' });
+      current.step = 'second';
+      return fwPushSecond(ctx, hooks);
+    });
+    return fwPushSettle(chain, ctx, hooks, current);
+  }
+
+  // retryPackageSecondFile(ctx, hooks) -> Promise<result> (never rejects). Re-sends
+  // the second file only (whole file); the firmware file already on the card is
+  // kept. Finds the module again first if it is no longer bound, and repeats the
+  // HELLO check unless it already passed on the current binding. Passes
+  // recoverEdit:true to fwPushHelloCheck - unlike the initial push (whose
+  // fwPushRebind already targets RUN mode via autoReconnect), a retry can be
+  // reached from a manual reconnect that lands in EDIT mode, and that is worth
+  // one REBOOT-and-rebind hop rather than stopping dead.
+  function retryPackageSecondFile(ctx, hooks) {
+    var current = { step: 'second' };
+    var chain = Promise.resolve().then(function () {
+      if (ctx.client.isConnected() && ctx.helloOk) return null;
+      current.step = 'reconnect';
+      hooks.onStep('reconnect', { state: 'active', error: null });
+      return (ctx.client.isConnected() ? Promise.resolve() : fwPushRebind(ctx))
+        .then(function () { return fwPushHelloCheck(ctx, true); })
+        .then(function () { hooks.onStep('reconnect', { state: 'done' }); });
+    }).then(function () {
+      current.step = 'second';
+      return fwPushSecond(ctx, hooks);
+    });
+    return fwPushSettle(chain, ctx, hooks, current);
+  }
+
+  // Pure: the step list view model. steps: { id -> { state, sent, total, error } }.
+  function fwPushStepRows(steps) {
+    return FW_UPDATE_TEXT.pushSteps.map(function (d) {
+      var st = (steps && steps[d.id]) || {};
+      return { id: d.id, label: d.label, state: st.state || 'pending', sent: st.sent, total: st.total, error: st.error || null };
+    });
+  }
+
   function FirmwareUpdatePanel(props) {
     var live = props.live, client = props.client;
     var st;
@@ -12773,6 +13703,8 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     st = useState(null); var committedCrcHex = st[0], setCommittedCrcHex = st[1];
     st = useState(null); var fwError = st[0], setFwError = st[1];
     st = useState(false); var rebootSent = st[0], setRebootSent = st[1];
+    st = useState(null); var pendingPackage = st[0], setPendingPackage = st[1];   // a packages[] row
+    st = useState(null); var channel = st[0], setChannel = st[1];                 // null = first channel
     var cancelRef = useRef(false);
     var fileRef = useRef(null);
 
@@ -12907,20 +13839,103 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
 
     function onRebootClick() { if (props.onReboot) { props.onReboot(); setRebootSent(true); } }
 
+    // The two-file push itself runs in the app (runPackagePush), because it outlives
+    // the edit-mode connection; the panel only picks the package and shows the steps.
+    var fwPush = props.fwPush || null;
+    var pushRunning = !!(fwPush && fwPush.status === 'running');
+    function onUpdatePackage() { if (pendingPackage && props.onUpdatePackage) props.onUpdatePackage(pendingPackage); }
+
+    var packages = manifestHasPackages(manifestState.manifest) ? manifestState.manifest.packages : null;
+    var channels = packageChannels(packages);
+    var shownChannel = channel && channels.indexOf(channel) >= 0 ? channel : (channels[0] || null);
+    var shownPackages = packages ? packagesForView(packages, showChannelToggle(packages) ? shownChannel : null) : [];
+
+    function packageRow(pkg) {
+      var installed = isInstalledPackage(pkg, props.fwBuildId);
+      var selected = !!(pendingPackage && pendingPackage.id === pkg.id);
+      var fw = pkg.firmware || {}, s7 = pkg.sector7 || {};
+      return ce('div', {
+        key: pkg.id, className: 'tc-fw-release-row tc-fw-package-row' + (selected ? ' selected' : ''),
+        'data-tc-package': pkg.id, role: 'button', tabIndex: 0, 'aria-pressed': selected,
+        onClick: function () { setPendingPackage(pkg); },
+        onKeyDown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPendingPackage(pkg); } },
+      },
+        ce('span', { className: 'tc-fw-pkg-version' }, 'v' + pkg.version),
+        ce('span', { className: 'tc-fw-pkg-date' }, pkg.date || ''),
+        ce('code', { className: 'tc-fw-pkg-id' }, pkg.id),
+        ce('span', { className: 'tc-fw-pkg-file' }, (fw.file || '') + ' · ' + fmtBytes(fw.size || 0)),
+        ce('span', { className: 'tc-fw-pkg-file' }, (s7.file || '') + ' · ' + fmtBytes(s7.size || 0)),
+        installed ? ce('span', { className: 'tc-fw-installed' }, FW_UPDATE_TEXT.installed) : null);
+    }
+
+    var channelToggle = packages && showChannelToggle(packages)
+      ? ce('div', { className: 'tc-fw-channels', role: 'group' },
+          channels.map(function (c) {
+            return ce('button', { key: c, className: 'tc-btn-mini' + (c === shownChannel ? ' active' : ''), 'aria-pressed': c === shownChannel,
+              onClick: function () { setChannel(c); setPendingPackage(null); } }, c);
+          }))
+      : null;
+
+    var updateSteps = ce('div', { className: 'tc-fw-block tc-fw-steps' },
+      ce('div', null, FW_UPDATE_TEXT.twoFiles),
+      ce('ol', null, FW_UPDATE_TEXT.steps.map(function (paras, i) {
+        return ce('li', { key: i }, paras.map(function (t, j) { return ce('p', { key: j }, t); }));
+      })));
+
     var stagedFilename = stagedQuad ? ('tetrachords_' + stagedQuad.join('_') + '.bin') : null;
 
+    function pushView() {
+      var rows = fwPushStepRows(fwPush.steps);
+      return ce('div', { className: 'tc-fw-push', 'data-tc-push-status': fwPush.status },
+        ce('div', null, 'v' + fwPush.version + ' ', ce('code', null, fwPush.pkgId)),
+        ce('ol', { className: 'tc-fw-push-steps' }, rows.map(function (r) {
+          var pct = r.total ? Math.round((r.sent || 0) / r.total * 100) : 0;
+          return ce('li', { key: r.id, className: 'tc-fw-push-step is-' + r.state, 'data-tc-push-step': r.id,
+            'data-tc-push-state': r.state, 'aria-current': r.state === 'active' ? 'step' : undefined },
+            ce('span', { className: 'tc-fw-push-label' }, r.label),
+            r.total ? ce('span', { className: 'tc-fw-push-bytes' }, ' · ' + (r.sent || 0) + ' / ' + r.total + ' B') : null,
+            (r.total && r.state === 'active') ? ce('div', { className: 'tc-progress' }, ce('div', { className: 'tc-progress-fill', style: { width: pct + '%' } })) : null,
+            r.error ? ce('div', { className: 'tc-scl-empty err' }, r.error) : null);
+        })),
+        fwPush.status === 'failed' ? ce('div', { className: 'tc-scl-empty err' }, FW_UPDATE_TEXT.pushFailed) : null,
+        // The firmware file is committed to the card in the 'firmware' step,
+        // before the 'restart'/'reconnect'/'second' steps that can still fail;
+        // once that has happened, the card already carries the new firmware
+        // file and the update needs finishing (retry), or a later SHIFT +
+        // TRACK 1 install off this card would show red at start.
+        (fwPush.status === 'failed' && rows.some(function (r) { return r.id === 'firmware' && r.state === 'done'; })
+          && !rows.some(function (r) { return r.id === 'second' && r.state === 'done'; }))
+          ? ce('p', { className: 'tc-fw-install-note' }, FW_UPDATE_TEXT.pushFailedFirmwareOnCard) : null,
+        fwPush.status === 'done' ? ce('div', { className: 'tc-fw-block tc-fw-steps tc-fw-push-done' },
+          ce('div', null, FW_UPDATE_TEXT.pushDone),
+          ce('ol', null, FW_UPDATE_TEXT.steps.map(function (paras, i) {
+            return ce('li', { key: i }, paras.map(function (t, j) { return ce('p', { key: j }, t); }));
+          })),
+          ce('p', { className: 'tc-fw-install-note' }, FW_UPDATE_TEXT.installNote)) : null,
+        pushRunning ? null : ce('div', { className: 'tc-fw-actions' },
+          (fwPush.status === 'failed' && fwPush.retry)
+            ? ce('button', { className: 'tc-btn', onClick: props.onRetrySecondFile }, FW_UPDATE_TEXT.retrySecond) : null,
+          ce('button', { className: 'tc-btn-mini ghost', onClick: props.onDismissPush }, FW_UPDATE_TEXT.close)));
+    }
+
     var body;
-    if (!live) {
+    if (fwPush) {
+      body = pushView();
+    } else if (!live) {
       body = ce('div', { className: 'tc-scl-empty' }, 'Connect to a Tetrachords to update its firmware.');
     } else if (step === 'pick' || step === 'validating') {
       body = ce('div', { className: 'tc-fw-pick' },
         ce('div', { className: 'tc-fw-block' },
           ce('h4', null, 'Published releases'),
           manifestState.loading ? ce('div', null, 'Checking…') : null,
-          (!manifestState.loading && manifestState.entries.length === 0)
+          (!manifestState.loading && !packages && manifestState.entries.length === 0)
             ? ce('div', { className: 'tc-scl-empty' }, manifestState.error || 'No published releases available.')
             : null,
-          manifestState.entries.length ? ce('div', { className: 'tc-fw-releases' },
+          packages ? channelToggle : null,
+          packages ? ce('div', { className: 'tc-fw-releases tc-fw-packages' }, shownPackages.map(packageRow)) : null,
+          packages ? ce('div', { className: 'tc-fw-actions' },
+            ce('button', { className: 'tc-btn', disabled: !pendingPackage || pushRunning, onClick: onUpdatePackage }, FW_UPDATE_TEXT.update)) : null,
+          (!packages && manifestState.entries.length) ? ce('div', { className: 'tc-fw-releases' },
             manifestState.entries.map(function (entry, i) {
               return ce('div', { key: i, className: 'tc-fw-release-row' },
                 ce('span', null, 'v' + entry.version + ' · ' + fmtBytes(entry.size)),
@@ -12984,7 +13999,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     return ce('div', { className: 'tc-panel', hidden: !!props.hidden, ref: props.panelRef, 'data-screen-label': 'FIRMWARE UPDATE', onFocusCapture: props.onActivate, onMouseDown: props.onActivate },
       ce('div', { className: 'tc-panel-head' },
         ce('h3', null, 'FIRMWARE UPDATE')),
-      ce('div', { className: 'tc-panel-body' }, body));
+      ce('div', { className: 'tc-panel-body' }, body, (live && !fwPush) ? updateSteps : null));
   }
 
   // ─── chrome ─────────────────────────────────────────────────────
@@ -13016,7 +14031,9 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         ce('span', { className: 'tc-beta', title: 'Beta - under active testing' }, 'BETA')
       ),
       ce('div', { className: 'tc-topbar-spacer' }),
-      ce(ConnChip, { conn: props.conn, onConnect: props.onConnect, onCloseChooser: props.onCloseChooser }),
+      // No Web MIDI (props.noDevice, owner spec 2026-09-29): no connection status and
+      // no Connect/Disconnect - the editor works on files only.
+      props.noDevice ? null : ce(ConnChip, { conn: props.conn, onConnect: props.onConnect, onCloseChooser: props.onCloseChooser }),
       // Appearance settings (FD63-1): the gear opens the settings window where
       // the appearance options live (candidate 3 dark by default).
       ce('button', {
@@ -13043,7 +14060,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       // live, performing the same action as the footer Disconnect (owner 2026-09-28).
       // The CONNECTED chip (ConnChip above) stays a status indicator only - this is
       // the only topbar control that disconnects.
-      live
+      props.noDevice ? null : live
         ? ce('button', { className: 'tc-btn tc-btn-solid', onClick: props.onDisconnect, disabled: props.busy }, 'Disconnect')
         // While the module chooser is open, Connect closes it again (owner 2026-09-27).
         : ce('button', { className: 'tc-btn tc-btn-solid', onClick: props.conn === 'choose' ? props.onCloseChooser : props.onConnect,
@@ -13197,12 +14214,58 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       advanced);
   }
 
+  // Pre-connect modal (owner spec 2026-09-29): shown before any connection, with a
+  // USB section (Connect) and a Manual section (Load / New). props.model is
+  // preconnectModel(); without Web MIDI only Manual shows. No backdrop dismissal -
+  // one of the buttons is the way in. A failed USB attempt keeps the modal up with
+  // the existing failure message (props.connMsg) and Retry, so Manual stays
+  // reachable. Header wording (owner-dictated, voice, 2026-09-29): with Web MIDI
+  // available the modal leads with a "Not connected" header above the USB and
+  // Manual sections; without Web MIDI there is no such header and the single
+  // (manual) section is headed "SD Config Editor" instead of "Manual".
+  function PreconnectModal(props) {
+    if (!props.open) return null;
+    var model = props.model || { showUsb: false, showManual: true };
+    var T = PRECONNECT_TEXT;
+    return ce('div', { className: 'tc-modal-back', role: 'dialog', 'aria-modal': 'true' },
+      ce('div', { className: 'tc-modal tc-preconnect', 'data-tc-preconnect': '1' },
+        model.showUsb ? ce('div', { className: 'tc-modal-head' }, ce('b', null, T.notConnectedHeader)) : null,
+        model.showUsb ? ce('div', { className: 'tc-preconnect-section', 'data-tc-section': 'usb' },
+          ce('div', { className: 'tc-modal-head' }, ce('span', null, T.usbTitle)),
+          ce('div', { className: 'tc-preconnect-body' },
+            ce('p', null, T.usbBody),
+            props.connMsg ? ce('p', { className: 'tc-preconnect-msg' }, props.connMsg) : null,
+            ce('div', { className: 'tc-preconnect-actions' },
+              ce('button', { className: 'tc-btn tc-btn-solid', disabled: props.busy, onClick: props.onConnect },
+                props.failed ? T.retry : T.connect)))) : null,
+        model.showManual ? ce('div', { className: 'tc-preconnect-section', 'data-tc-section': 'manual' },
+          ce('div', { className: 'tc-modal-head' }, ce('span', null, model.showUsb ? T.manualTitle : T.manualOnlyTitle)),
+          ce('div', { className: 'tc-preconnect-body' },
+            ce('p', null, T.manualBody),
+            ce('div', { className: 'tc-preconnect-actions' },
+              ce('button', { className: 'tc-btn', disabled: props.busy, onClick: props.onLoad }, T.load),
+              ce('button', { className: 'tc-btn', disabled: props.busy, onClick: props.onNew }, T.newFile)))) : null));
+  }
+
   function ActionBar(props) {
     var n = props.n, nLegacy = props.nLegacy || 0, live = props.conn === 'live';
     var pending = n || nLegacy;                 // user edits, or legacy lines still to migrate on save
     var label = n
       ? ce(R.Fragment, null, ce('b', null, n), ' changed')
       : (nLegacy ? ce(R.Fragment, null, ce('b', null, nLegacy), ' legacy line' + (nLegacy > 1 ? 's' : '') + ' to migrate') : 'No change');
+    // Manual (offline) mode (owner spec 2026-09-29): Revert rebuilds from the
+    // session's baseline file, the write button downloads the canonical compose
+    // as config.txt, and there is no Disconnect (nothing is connected). Taken
+    // only while no module is live - a live connection is always USB mode.
+    if (props.manual && !live) {
+      return ce('div', { className: 'tc-actionbar' },
+        ce('span', { className: 'tc-changecount' + (pending ? '' : ' none') }, label),
+        ce('div', { className: 'tc-actionbar-spacer' }),
+        ce('button', { className: 'tc-btn tc-btn-ghost', disabled: props.busy, onClick: props.onManualLoad }, PRECONNECT_TEXT.load),
+        ce('button', { className: 'tc-btn tc-btn-ghost', disabled: props.busy, onClick: props.onManualNew }, PRECONNECT_TEXT.newFile),
+        ce('button', { className: 'tc-btn tc-btn-ghost', disabled: !n || props.busy, onClick: props.onManualRevert }, PRECONNECT_TEXT.revert),
+        ce('button', { className: 'tc-btn', disabled: props.busy, onClick: props.onDownload }, PRECONNECT_TEXT.download));
+    }
     return ce('div', { className: 'tc-actionbar' },
       ce('span', { className: 'tc-changecount' + (pending ? '' : ' none') }, label),
       live ? null : ce('span', { className: 'tc-wip' }, 'Read-only until connected'),
@@ -13295,7 +14358,9 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         // rail reads instead of a hard-coded section id.
         en = { id: sec.id, title: m.railLabel || sec.title, sub: sec.railSub ? (sec.sub || null) : null, dirty: !!dc, group: m.group };
       } else if (m.id === 'songs') {
-        en = { id: 'songs', title: 'SONG LIBRARY', group: m.group };
+        // No Web MIDI (props.noDevice): no route to a live card, so no entry for a
+        // panel that only works against one (owner spec 2026-09-29).
+        en = props.noDevice ? null : { id: 'songs', title: 'SONG LIBRARY', group: m.group };
       } else if (m.id === 'tuning') {
         // TUNING (owner ruling 2026-09-28, final): one plain rail entry, not a
         // group - it stacks the library and file-creator panels, each keeping
@@ -13303,7 +14368,9 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         // standalone 'scala' entry.
         en = { id: 'tuning', title: 'TUNING', err: !!props.scalaError };
       } else if (m.id === 'firmware') {
-        en = { id: 'firmware', title: 'FIRMWARE UPDATE', group: m.group };
+        // Only when the live module answered HELLO with the field-update caps
+        // (fwCapable, set by the app after a USB connection goes live).
+        en = (props.noDevice || !props.fwCapable) ? null : { id: 'firmware', title: 'FIRMWARE UPDATE', group: m.group };
       }
       if (en) { used[m.id] = true; out.push(en); }
     });
@@ -13320,6 +14387,22 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   // Exposed for host tests (RAIL_MANIFEST/RAIL_GROUPS are pure data, defined
   // after the TCEditorUtil object literal above, so they're attached here).
   window.TCEditorUtil.RAIL_MANIFEST = RAIL_MANIFEST;
+  // Firmware gate + package list pure helpers (defined beside FirmwareUpdatePanel).
+  window.TCEditorUtil.fwGateFromHello = fwGateFromHello;
+  window.TCEditorUtil.probeFwGate = probeFwGate;
+  window.TCEditorUtil.parseFwBuildId = parseFwBuildId;
+  window.TCEditorUtil.isInstalledPackage = isInstalledPackage;
+  window.TCEditorUtil.packageChannels = packageChannels;
+  window.TCEditorUtil.showChannelToggle = showChannelToggle;
+  window.TCEditorUtil.packagesForView = packagesForView;
+  window.TCEditorUtil.manifestHasPackages = manifestHasPackages;
+  // Two-file push driver (host-tested against the MockDevice).
+  window.TCEditorUtil.runPackagePush = runPackagePush;
+  window.TCEditorUtil.retryPackageSecondFile = retryPackageSecondFile;
+  window.TCEditorUtil.checkPackageFiles = checkPackageFiles;
+  window.TCEditorUtil.fwQuadNameable = fwQuadNameable;
+  window.TCEditorUtil.fwPushStepRows = fwPushStepRows;
+  window.TCEditorUtil.FW_PUSH_STEP_IDS = FW_PUSH_STEP_IDS;
   window.TCEditorUtil.RAIL_GROUPS = RAIL_GROUPS;
   window.TCEditorUtil.railEntries = railEntries;
 
@@ -13331,8 +14414,8 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   // land on MIDI CHANNELS). RAIL_MANIFEST[0].id is the ultimate fallback, for
   // the a limit-case where railEntries somehow returns nothing - still
   // manifest-derived, never a section id.
-  function firstRailEntryId(sections, hasReadonly, scalaError) {
-    var entries = railEntries({ sections: sections || [], values: {}, committed: {}, hasReadonly: !!hasReadonly, scalaError: !!scalaError });
+  function firstRailEntryId(sections, hasReadonly, scalaError, noDevice) {
+    var entries = railEntries({ sections: sections || [], values: {}, committed: {}, hasReadonly: !!hasReadonly, scalaError: !!scalaError, noDevice: !!noDevice });
     return (entries[0] && entries[0].id) || RAIL_MANIFEST[0].id;
   }
   window.TCEditorUtil.firstRailEntryId = firstRailEntryId;   // exposed for host tests
@@ -13475,8 +14558,14 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   // ─── disconnect confirm (owner ruling 2026-09-19, voice) ───────────────
   // Shown only when Disconnect is pressed with unsaved changes pending (see
   // onDisconnectClick). Same modal shell as the Song Library / migration dialogs.
-  // Escape is Cancel; a backdrop click is also Cancel.
+  // Escape is Cancel; a backdrop click is also Cancel. props.text (optional)
+  // replaces the wording when the same choice gates a firmware update:
+  // { title, body, note, write, discard, cancel }.
   function DisconnectModal(props) {
+    var t = props.text || {
+      title: DISCONNECT_TITLE, body: DISCONNECT_BODY, note: DISCONNECT_NOTE,
+      write: 'Write to card and disconnect', discard: 'Discard and disconnect', cancel: 'Cancel',
+    };
     useEffect(function () {
       if (!props.open) return;
       function onKey(e) { if (e.key === 'Escape') props.onCancel(); }
@@ -13484,18 +14573,18 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       return function () { document.removeEventListener('keydown', onKey); };
     }, [props.open]);
     if (!props.open) return null;
-    return ce('div', { className: 'tc-modal-back', onClick: props.onCancel, role: 'dialog', 'aria-modal': 'true', 'aria-label': DISCONNECT_TITLE },
+    return ce('div', { className: 'tc-modal-back', onClick: props.onCancel, role: 'dialog', 'aria-modal': 'true', 'aria-label': t.title },
       ce('div', { className: 'tc-modal tc-disconnect', onClick: function (e) { e.stopPropagation(); } },
         ce('div', { className: 'tc-modal-head' },
-          ce('span', null, DISCONNECT_TITLE),
+          ce('span', null, t.title),
           ce('button', { className: 'tc-btn-mini ghost', onClick: props.onCancel }, 'Close')),
         ce('div', { className: 'tc-disconnect-body' },
-          ce('p', null, DISCONNECT_BODY),
+          ce('p', null, t.body),
           ce('div', { className: 'tc-disconnect-actions' },
-            ce('button', { className: 'tc-btn tc-btn-solid', disabled: props.busy, onClick: props.onWriteAndDisconnect }, 'Write to card and disconnect'),
-            ce('button', { className: 'tc-btn', disabled: props.busy, onClick: props.onDiscardAndDisconnect }, 'Discard and disconnect'),
-            ce('button', { className: 'tc-btn tc-btn-ghost', disabled: props.busy, onClick: props.onCancel }, 'Cancel')),
-          ce('p', { className: 'tc-disconnect-note' }, DISCONNECT_NOTE))));
+            ce('button', { className: 'tc-btn tc-btn-solid', disabled: props.busy, onClick: props.onWriteAndDisconnect }, t.write),
+            ce('button', { className: 'tc-btn', disabled: props.busy, onClick: props.onDiscardAndDisconnect }, t.discard),
+            ce('button', { className: 'tc-btn tc-btn-ghost', disabled: props.busy, onClick: props.onCancel }, t.cancel)),
+          t.note ? ce('p', { className: 'tc-disconnect-note' }, t.note) : null)));
   }
 
   // ─── calibration different-module warning (owner ruling, voice, 2026-09-28) ───
@@ -13738,7 +14827,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
               // case; a mid-connect reset-entry loss should not touch conn at all (the
               // connect flow is still running and owns its own 'connecting' state).
               if (meta && meta.intentional) {
-                if (meta.reason === 'reboot') showToast(REBOOT_TOAST_MSG);
+                if (meta.reason === 'reboot' && !fwPushRunning()) showToast(REBOOT_TOAST_MSG);
                 devLog('disconnected (intentional, ' + meta.reason + '): ' + (detail || ''));
                 return;
               }
@@ -13756,6 +14845,45 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       }
       return clientRef.current;
     }
+
+    // Pre-connect modal + manual mode (owner spec 2026-09-29). Web MIDI is decided
+    // ONCE at mount from the transport's own guard; noDevice hides every USB-only
+    // surface (connect chip/banner, Connect/Disconnect, song, firmware, tunings
+    // library and calibration library panels). session.kind: 'none' until the user
+    // picks a route in the modal, 'usb' once a module is live, 'manual' after Load
+    // or New (source 'file' | 'defaults'; baselineText is what Revert rebuilds from).
+    st = useState(function () { return preconnectModel({ webMidi: ensureClient().hasWebMidi() }); }); var preconnect = st[0];
+    var noDevice = !preconnect.showUsb;
+    st = useState({ kind: 'none', source: null, baselineText: '', fileName: '' }); var session = st[0], setSession = st[1];
+    var sessionRef = useRef(session); sessionRef.current = session;
+    // Firmware update gate: one HELLO right after a USB connection goes live.
+    // fwGate.capable decides whether the FIRMWARE UPDATE panel and rail entry exist;
+    // fwGate.buildId is the module's HELLO fw_build_id (installed-package mark).
+    // Cleared whenever the connection leaves live.
+    st = useState({ capable: false, buildId: null }); var fwGate = st[0], setFwGate = st[1];
+    // Two-file firmware push (runPackagePush). fwPush is the step-list model the
+    // FIRMWARE UPDATE panel renders: { pkgId, version, status: 'running'|'failed'|
+    // 'done', retry, steps: { id -> { state, sent, total, error } } }. It outlives
+    // the edit-mode connection (the push restarts the module into RUN mode), so the
+    // panel stays mounted while it exists. fwPushCtxRef holds the retry context.
+    st = useState(null); var fwPush = st[0], setFwPushState = st[1];
+    var fwPushRef = useRef(null);
+    var fwPushCtxRef = useRef(null);
+    st = useState(null); var fwUnsavedPkg = st[0], setFwUnsavedPkg = st[1];   // package waiting on the unsaved-edits choice
+    function setFwPush(next) { fwPushRef.current = next; setFwPushState(next); }
+    function fwPushRunning() { return !!(fwPushRef.current && fwPushRef.current.status === 'running'); }
+    useEffect(function () {
+      var cancelled = false;
+      if (conn === 'live') {
+        probeFwGate(clientRef.current).then(function (g) {
+          if (!cancelled) { devLog('HELLO firmware gate: capable=' + g.capable + ' fw_build_id=' + (g.buildId == null ? '-' : '0x' + g.buildId.toString(16).toUpperCase())); setFwGate(g); }
+        });
+      } else {
+        setFwGate({ capable: false, buildId: null });
+        if (!fwPushRef.current) setActive(function (a) { return a === 'firmware' ? firstRailEntryId(SIM_SECTIONS, false, false) : a; });
+      }
+      return function () { cancelled = true; };
+    }, [conn]);
 
     // Auto-reconnect after a page reload (owner ruling 2026-09-28). Web MIDI drops
     // every port on unload, so this runs once on mount: if a module was remembered
@@ -13780,10 +14908,10 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         // own proof-pairing on top of it would double-bind. The guard right before
         // loadAndGoLive below is not enough; autoReconnect itself must not start once
         // a manual connect has moved conn off 'sim'.
-        if (cancelled || !autoReconnectShouldBind(granted, connRef.current)) return null;
+        if (cancelled || sessionRef.current.kind === 'manual' || !autoReconnectShouldBind(granted, connRef.current)) return null;
         return client.autoReconnect(remembered.uid);
       }).then(function (res) {
-        if (cancelled || !res || connRef.current !== 'sim') return;
+        if (cancelled || !res || connRef.current !== 'sim' || sessionRef.current.kind === 'manual') return;
         devLog('auto-reconnect: remembered module answered, resuming');
         return loadAndGoLive(client, res.info);
       }).catch(function () { /* silent by design - reload auto-reconnect never surfaces a failure */ });
@@ -13976,6 +15104,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         });
       }).then(function (res) {
         applyLive(res.loaded, res.scala, res.songs);
+        setSession({ kind: 'usb', source: null, baselineText: '', fileName: '' });
         setConn('live'); setConnMsg(''); setModules(null);
         if (res.loaded.cardUnreadable) {
           showToast('Connected, but CONFIG.TXT has an unreadable character - see Repair below');
@@ -14018,6 +15147,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     }
 
     function doConnect(sel) {
+      if (fwPushRunning()) { showToast(FW_UPDATE_TEXT.busyConnect); return Promise.resolve(null); }
       var client = ensureClient();
       // Advanced manual pick: bind exactly those ports and load (last-resort escape hatch).
       if (sel && sel.inId && sel.outId) {
@@ -14315,6 +15445,79 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
 
     function onRevert() { setValues(Object.assign({}, committed)); showToast('Reverted to last write'); }
 
+    // ── manual (offline) mode (owner spec 2026-09-29) ─────────────
+    // res is manualSessionFromText()'s { session, loaded }. The loaded model came
+    // through the same population core as a card READ_RAW; the migration popup is
+    // offered on Load exactly as on connect (offerMigration), never on Revert.
+    function applyManual(res, offerMigration) {
+      var loaded = res.loaded;
+      setSections(loaded.sections);
+      setCommitted(loaded.committed);
+      setValues(Object.assign({}, loaded.committed));
+      setPresent(loaded.present);
+      setReadonly(loaded.readonly || []);
+      setLegacyKey(loaded.legacyKey || {});
+      setPcMigration(loaded.pcMigration || null);
+      setDialect(null);
+      rawCardRef.current = loaded.raw;
+      recordsRef.current = loaded.records;
+      legacyConflictsRef.current = [];
+      setCardUnreadable(false);
+      // Only ever called with no module live; a failed USB attempt before it is over.
+      setConn('sim'); setConnMsg('');
+      setActive(firstRailEntryId(loaded.sections, (loaded.readonly || []).length > 0, null, noDevice));
+      setSession(res.session);
+      setMigration(offerMigration && loaded.needsMigration ? { raw: loaded.raw } : null);
+      devLog('manual mode: ' + res.session.source + (res.session.fileName ? ' "' + res.session.fileName + '"' : '') + ' (' + loaded.raw.length + ' B)');
+    }
+    function manualModelNow() {
+      return {
+        records: recordsRef.current, committed: committedRef.current, present: presentRef.current,
+        raw: rawCardRef.current, legacyKey: legacyKeyRef.current, pcMigration: pcMigrationRef.current,
+      };
+    }
+    // Guarded the same way as onConnectGuarded: called both from the preconnect
+    // modal (session.kind === 'none', nothing loaded yet, dirtyNow() is empty) and
+    // from the manual-mode action bar (a loaded file may have unsaved edits).
+    function onManualNew() {
+      if (sessionRef.current.kind === 'manual' && manualRevertPath(dirtyNow().length > 0) === 'confirm'
+        && !window.confirm(PRECONNECT_TEXT.leaveManualConfirm)) return;
+      applyManual(manualNewSession(), false);
+    }
+    function onManualLoad() {
+      if (sessionRef.current.kind === 'manual' && manualRevertPath(dirtyNow().length > 0) === 'confirm'
+        && !window.confirm(PRECONNECT_TEXT.leaveManualConfirm)) return;
+      var inp = document.createElement('input');
+      inp.type = 'file'; inp.accept = '.txt,text/plain';
+      inp.onchange = function () {
+        var file = inp.files && inp.files[0];
+        if (!file) return;
+        readFileText(file).then(function (text) {
+          applyManual(manualSessionFromText('file', text, file.name), true);
+        }, function (e) { showToast('Could not read file: ' + (e.message || e)); });
+      };
+      inp.click();
+    }
+    function onManualRevert() {
+      var cur = sessionRef.current;
+      if (cur.kind !== 'manual') return;
+      if (manualRevertPath(dirtyNow().length > 0) === 'confirm' && !window.confirm(PRECONNECT_TEXT.revertConfirm)) return;
+      applyManual(manualRevertSession(cur), false);
+    }
+    function onManualDownload() {
+      var text;
+      try { text = manualComposeText(manualModelNow(), valuesRef.current); }
+      catch (e) { showToast('Compose failed: ' + (e.message || e)); return; }
+      downloadText(PRECONNECT_TEXT.downloadFilename, text);
+      showToast('Downloaded ' + PRECONNECT_TEXT.downloadFilename);
+    }
+    // Connect from inside manual mode (Web MIDI present): a live module replaces the
+    // manual model, so unsaved manual edits get the same confirm as Revert.
+    function onConnectGuarded() {
+      if (sessionRef.current.kind === 'manual' && dirtyNow().length && !window.confirm(PRECONNECT_TEXT.leaveManualConfirm)) return;
+      doConnect();
+    }
+
     // Commented hand-editing copy (owner rulings q-h127-1 / q-h127-4, 2026-08-12).
     // Renders the SAME canonical file from the SAME comment source as the on-card
     // format, plus each key's full help text, under a header warning. This is a
@@ -14344,6 +15547,16 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       showToast('Downloaded config.txt');
     }
     function onMigrateUpdate() {
+      // Manual mode: Update rewrites the loaded file into the current format in the
+      // browser (the same composer), and that becomes the session's baseline.
+      if (conn !== 'live' && sessionRef.current.kind === 'manual') {
+        var cur = sessionRef.current, updated;
+        try { updated = manualComposeText(manualModelNow(), committedRef.current); }
+        catch (e) { showToast('Compose failed: ' + (e.message || e)); return; }
+        applyManual(manualSessionFromText(cur.source, updated, cur.fileName), false);
+        showToast('Updated to latest format');
+        return;
+      }
       if (conn !== 'live') { showToast('Connect to a Tetrachords to update'); return; }
       var model = {
         records: recordsRef.current, committed: committedRef.current, values: valuesRef.current,
@@ -14601,6 +15814,74 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       });
     }
 
+    // Two-file push (runPackagePush). Step 1: unsaved config edits are written or
+    // discarded first, through the same choice the Disconnect button offers.
+    function onUpdatePackage(pkg) {
+      if (conn !== 'live' || fwPushRunning() || !pkg) return;
+      var hasUnsavedChanges = !!(dirtyNow().length || Object.keys(legacyKey).length || hasRetiredPcLines());
+      if (disconnectClickPath(hasUnsavedChanges) === 'confirm') { setFwUnsavedPkg(pkg); return; }
+      beginPackagePush(pkg);
+    }
+    function onFwUnsavedWrite() {
+      var pkg = fwUnsavedPkg; setFwUnsavedPkg(null);
+      setBusy(true);
+      writeDirty().then(function (ok) {
+        setBusy(false);
+        if (!ok) { showToast(FW_UPDATE_TEXT.unsavedWriteFailed); return; }
+        beginPackagePush(pkg);
+      }, function (e) { setBusy(false); showToast('Write failed: ' + (e.message || e)); });
+    }
+    function onFwUnsavedDiscard() {
+      var pkg = fwUnsavedPkg; setFwUnsavedPkg(null);
+      setValues(Object.assign({}, committedRef.current));
+      beginPackagePush(pkg);
+    }
+    function fwPushHooks() {
+      return {
+        onStep: function (id, patch) {
+          var cur = fwPushRef.current; if (!cur) return;
+          var steps = Object.assign({}, cur.steps);
+          steps[id] = Object.assign({}, steps[id], patch);
+          setFwPush(Object.assign({}, cur, { steps: steps }));
+          // The restart ends the edit-mode connection; the app shows no module
+          // (never 'nodevice' - the restart was asked for) while the push goes on.
+          if (id === 'restart' && patch.state === 'active') { setConn('sim'); setConnMsg(''); }
+          devLog('firmware push: ' + id + (patch.state ? ' ' + patch.state : '') + (patch.error ? ' - ' + patch.error : ''));
+        },
+        fetchBytes: function (url) {
+          return fetch(url, { cache: 'no-store' }).then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.arrayBuffer();
+          }).then(function (buf) { return new Uint8Array(buf); });
+        },
+      };
+    }
+    function settlePackagePush(res) {
+      fwPushCtxRef.current = res.ctx;
+      setFwPush(Object.assign({}, fwPushRef.current, { status: res.ok ? 'done' : 'failed', retry: !!res.retry }));
+      setBusy(false);
+    }
+    function beginPackagePush(pkg) {
+      var client = clientRef.current;
+      if (!client || fwPushRunning()) return;
+      setFwPush({ pkgId: pkg.id, version: pkg.version, status: 'running', retry: false, steps: {} });
+      setBusy(true);
+      runPackagePush(pkg, client, fwPushHooks()).then(settlePackagePush);
+    }
+    function onRetrySecondFile() {
+      var ctx = fwPushCtxRef.current;
+      if (!ctx || fwPushRunning()) return;
+      setFwPush(Object.assign({}, fwPushRef.current, { status: 'running', retry: false }));
+      setBusy(true);
+      retryPackageSecondFile(ctx, fwPushHooks()).then(settlePackagePush);
+    }
+    function onDismissPush() {
+      if (fwPushRunning()) return;
+      fwPushCtxRef.current = null; setFwPush(null);
+      // Without a live module the panel goes with the push; leave its rail entry too.
+      if (connRef.current !== 'live') setActive(function (a) { return a === 'firmware' ? firstRailEntryId(SIM_SECTIONS, false, false) : a; });
+    }
+
     function onDeleteSong(slot) {
       if (conn !== 'live') { showToast('Connect to delete a song'); return; }
       setBusy(true);
@@ -14697,7 +15978,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     var onSetSectionOrder = function (ids) { updateSectionOrder({ on: sectionOrder.on, order: ids }); };
     var onResetSectionOrder = function () { updateSectionOrder({ on: sectionOrder.on, order: [] }); showToast('Section order reset'); };
     var onCopySectionOrder = function () {
-      var shipped = railEntries({ sections: sections, values: values, committed: committed, hasReadonly: hasReadonly, scalaError: scalaError });
+      var shipped = railEntries({ sections: sections, values: values, committed: committed, hasReadonly: hasReadonly, scalaError: scalaError, noDevice: noDevice, fwCapable: (live && fwGate.capable) || !!fwPush });
       var shown = sectionOrder.on ? applySectionOrder(shipped, sectionOrder.order) : shipped;
       copyWithToast(sectionOrderText(shown), 'Section order copied');
     };
@@ -14715,8 +15996,17 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     var commit = useCallback(function (key, v) { setValues(function (s) { var c = Object.assign({}, s); c[key] = v; return c; }); }, [setValues]);
     var activate = function (id) { setActive(id); };
     var live = conn === 'live';
-    var hasReadonly = live && readonly.length > 0;
-    var connectBanner = ce(ConnectBanner, {
+    var manual = session.kind === 'manual' && !live;
+    var hasReadonly = (live || manual) && readonly.length > 0;
+    // Pre-connect modal: up until a route is chosen, and back after a failed USB
+    // attempt (with the failure message) so Manual stays reachable. While
+    // connecting or choosing a module the connect banner owns the screen instead.
+    var failedConnect = conn === 'nodevice' || conn === 'runmode';
+    var preconnectOpen = session.kind === 'none' && (conn === 'sim' || failedConnect);
+    // No connect banner without Web MIDI, or while idle in manual mode (a connect
+    // started from manual mode still shows its progress, chooser and failure).
+    var showBanner = !noDevice && !(manual && conn === 'sim');
+    var connectBanner = !showBanner ? null : ce(ConnectBanner, {
       conn: conn, connMsg: connMsg, tetra: tetra, modules: modules, identifyingId: identifyingId, identifyBusy: identifyBusy,
       pickIn: pickIn, pickOut: pickOut, onPickIn: setPickIn, onPickOut: setPickOut,
       onConnect: function () { doConnect(); },
@@ -14788,10 +16078,10 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         height: '100vh', display: 'flex', flexDirection: 'column', '--text-scale': textScale * SCALE_BASE, '--title-scale': titleScale * SCALE_BASE,
       },
     },
-      ce(TopBar, { conn: conn, busy: busy, dev: dev, onToggleDev: onToggleDev, showDevLog: showDevLog, onOpenSettings: function () { setSettingsOpen(true); }, onConnect: function () { doConnect(); }, onCloseChooser: closeChooser, onReload: onReload, onRaw: onRaw, onDisconnect: onDisconnectClick }),
+      ce(TopBar, { conn: conn, busy: busy, dev: dev, onToggleDev: onToggleDev, showDevLog: showDevLog, onOpenSettings: function () { setSettingsOpen(true); }, onConnect: onConnectGuarded, onCloseChooser: closeChooser, onReload: onReload, onRaw: onRaw, onDisconnect: onDisconnectClick, noDevice: noDevice }),
       ce(SettingsModal, { open: settingsOpen, appearance: appearance, onPick: onPickAppearance, onClose: function () { setSettingsOpen(false); },
         published: publishedBuild,
-        canExport: conn === 'live', onExportCommented: onExportCommented,
+        canExport: live || manual, onExportCommented: onExportCommented,
         orderOn: sectionOrder.on, onToggleOrder: onToggleSectionOrder, onCopyOrder: onCopySectionOrder, onResetOrder: onResetSectionOrder,
         showDevLog: showDevLog, onToggleShowDevLog: onToggleShowDevLog }),
       ce(CardUnreadableBanner, { conn: conn, cardUnreadable: cardUnreadable, busy: busy, onRepair: onRepairConfig }),
@@ -14801,7 +16091,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
       }) : null,
       // The Program Change view carries the same connect banner, so Connect and the
       // module chooser work there too (owner 2026-09-27: nothing showed before).
-      view === 'pc' && conn !== 'live' ? ce('div', { className: 'pc-view-connect' }, connectBanner) : null,
+      view === 'pc' && conn !== 'live' && connectBanner ? ce('div', { className: 'pc-view-connect' }, connectBanner) : null,
       view === 'pc'
         ? ce(PcEditorView, {
             bridge: (typeof window !== 'undefined') ? window.TCPcBridge : null,
@@ -14815,7 +16105,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         ce('div', { className: 'tc-layout' },
           ce(Rail, {
             sections: sections, values: values, committed: committed, scalaError: !!scalaError, active: active, onJump: jump,
-            hasReadonly: hasReadonly,
+            hasReadonly: hasReadonly, noDevice: noDevice, fwCapable: (live && fwGate.capable) || !!fwPush,
             orderOn: !publishedBuild && sectionOrder.on, order: sectionOrder.order, onOrder: onSetSectionOrder,
             textScale: textScale, titleScale: titleScale, onTextScale: setTextScale, onTitleScale: setTitleScale,
             displayOpen: displayOpen, onToggleDisplay: function () { setDisplayOpen(function (o) { return !o; }); },
@@ -14837,6 +16127,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
                 // Panel draws it, and only for 'cv' - harmless to pass for every
                 // section, Panel itself gates on sec.id.
                 calLive: live, calEntries: calEntries, calBusy: busy, onOpenCal: function () { setCalModalOpen(true); },
+                calOff: noDevice,
               });
             }),
             hasReadonly ? ce(ReadOnlyCardPanel, {
@@ -14865,16 +16156,18 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
               // RailPanel) - this wrapper no longer duplicates a head or hides
               // plugin markup via CSS.
               ce('div', { className: 'tc-tuning-page' },
-                (window.TCTuningsLibrary && window.TCTuningsLibrary.Panel)
+                // The library half reads the card, so it is absent without Web MIDI
+                // (owner spec 2026-09-29); the file creator half works offline.
+                noDevice ? null : (window.TCTuningsLibrary && window.TCTuningsLibrary.Panel)
                   ? ce(window.TCTuningsLibrary.Panel, {
                       live: live, client: clientRef.current,
                       open: true, onToggle: function () {}, onActivate: function () { activate('tuning'); },
-                      onConnect: function () { doConnect(); }, showToast: showToast,
+                      onConnect: onConnectGuarded, showToast: showToast,
                     })
                   : ce(ScalaPanel, {
                       live: live, files: scalaFiles, scalaError: scalaError,
                       open: true, onToggle: function () {}, onActivate: function () { activate('tuning'); },
-                      onConnect: function () { doConnect(); },
+                      onConnect: onConnectGuarded,
                       onPreview: onPreviewScala, onDownload: onDownloadScala, onDelete: onDeleteScala,
                       onRead: onReadScala,
                     }),
@@ -14891,26 +16184,40 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
                   : null
               )
             ),
-            ce(SongLibraryPanel, {
+            noDevice ? null : ce(SongLibraryPanel, {
               live: live, songs: songModel, songError: songError, busy: busy,
               hidden: active !== 'songs', onActivate: function () { activate('songs'); },
               onOpen: function () { setSongModalOpen(true); },
               onOpenBackup: function () { setVaultModalOpen(true); },
               panelRef: function (el) { panelRefs.current.songs = el; },
             }),
-            ce(FirmwareUpdatePanel, {
-              live: live, client: clientRef.current, showToast: showToast, onReboot: onFwReboot,
+            (noDevice || !((live && fwGate.capable) || fwPush)) ? null : ce(FirmwareUpdatePanel, {
+              live: live, client: clientRef.current, showToast: showToast, onReboot: onFwReboot, fwBuildId: fwGate.buildId,
+              fwPush: fwPush, onUpdatePackage: onUpdatePackage, onRetrySecondFile: onRetrySecondFile, onDismissPush: onDismissPush,
               hidden: active !== 'firmware', onActivate: function () { activate('firmware'); },
               panelRef: function (el) { panelRefs.current.firmware = el; },
             })
           )
         )
       ),
-      ce(ActionBar, { n: n, nLegacy: Object.keys(legacyKey).length + (pcMigration && !cardUnreadable ? pcMigration.retired.length : 0), conn: conn, busy: busy, onRevert: onRevert, onWrite: onWrite, onDisconnect: onDisconnectClick }),
+      ce(ActionBar, { n: n, nLegacy: Object.keys(legacyKey).length + (pcMigration && !cardUnreadable ? pcMigration.retired.length : 0), conn: conn, busy: busy, onRevert: onRevert, onWrite: onWrite, onDisconnect: onDisconnectClick,
+        manual: manual, onManualRevert: onManualRevert, onDownload: onManualDownload, onManualLoad: onManualLoad, onManualNew: onManualNew }),
+      ce(PreconnectModal, {
+        open: preconnectOpen, model: preconnect, busy: busy,
+        failed: failedConnect, connMsg: failedConnect ? connMsg : '',
+        onConnect: function () { doConnect(); }, onLoad: onManualLoad, onNew: onManualNew,
+      }),
       ce(DisconnectModal, {
         open: disconnectModalOpen, busy: busy,
         onWriteAndDisconnect: onWriteAndDisconnect, onDiscardAndDisconnect: onDiscardAndDisconnect,
         onCancel: function () { setDisconnectModalOpen(false); },
+      }),
+      ce(DisconnectModal, {
+        open: !!fwUnsavedPkg, busy: busy,
+        text: { title: FW_UPDATE_TEXT.unsavedTitle, body: FW_UPDATE_TEXT.unsavedBody, note: null,
+          write: FW_UPDATE_TEXT.unsavedWrite, discard: FW_UPDATE_TEXT.unsavedDiscard, cancel: FW_UPDATE_TEXT.unsavedCancel },
+        onWriteAndDisconnect: onFwUnsavedWrite, onDiscardAndDisconnect: onFwUnsavedDiscard,
+        onCancel: function () { setFwUnsavedPkg(null); },
       }),
       ce(Modal, { modal: modal, onClose: function () { setModal(null); }, onCopy: onCopyRaw }),
       ce(MigrationModal, { migration: migration, busy: busy, onClose: function () { setMigration(null); }, onBackup: onMigrateBackup, onUpdate: onMigrateUpdate }),
@@ -15282,16 +16589,6 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     function commitRename() {
       var bank = renameBank;
       var label = renameVal.trim();
-      var target = bankByNumber(banks, bank);
-      // Text deleted outright (owner ruling 2026-09-28: no agent-written
-      // user-facing text; the old wording was also factually wrong - it
-      // claimed a "card copy", but labelling a built-in bank creates an
-      // empty folder, and any card bank folder makes the module stop using
-      // every built-in bank). No replacement wording supplied yet - this
-      // native confirm() is left with an empty message pending it.
-      if (target && target.source === 'builtin' && !window.confirm('')) {
-        return;
-      }
       props.onWire(function (c) { return c.tuningBankLabelSet(bank, label); }, 'Relabelled bank ' + bank).then(function () {
         setRenameBank(null); setRenameVal('');
       }, function () { /* onWire toasts */ });
@@ -19372,6 +20669,23 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
 </head>
 <body>
 <div id="root"></div>
+<!-- Dev-only mock switch (owner request 2026-09-29): open this dev page with
+     #mock in the URL to load dev-mock-device.js and install a fake Tetrachords
+     device (default HELLO caps, warm-reset reenumeration) before the app
+     mounts, so the firmware panel and a full push can be seen with no module
+     attached. Documented in RUNNING.md. Guarded on window.TC_PUBLISHED, which
+     build.mjs sets true near the end of head, well before this point in
+     document order, in dist/index.html only - the dev source here never sets
+     it - so this block stays inert in the published build even though it has
+     no src= attribute for build.mjs's inliner to touch and rides into dist
+     verbatim. document.write (not defer/async) is required: it must finish
+     before the render call just below reads navigator.requestMIDIAccess. -->
+<script>
+  if (!window.TC_PUBLISHED && location.hash === '#mock') {
+    document.write('<script src=dev-mock-device.js><\/script>');
+    document.write('<script>window.installTCMockDevice({ rebootReenumerates: true });<\/script>');
+  }
+</script>
 <script>
   ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(window.SDConfigEditor));
 </script>
