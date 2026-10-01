@@ -1825,9 +1825,10 @@ body.theme-cand5d { background: #191815; }
 .tc-fw-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .tc-fw-reboot-instructions { display: flex; flex-direction: column; gap: 4px; color: var(--w-ink-2); }
 /* Package list (manifest v2 packages[]): one selectable row per package. */
-.tc-fw-package-row { cursor: pointer; padding: 4px 6px; border: 1px solid transparent; }
+.tc-fw-package-row { cursor: pointer; padding: 4px 6px; border: 1px solid transparent; flex-direction: column; align-items: stretch; gap: 2px; }
 .tc-fw-package-row.selected { border-color: var(--w-line); }
 .tc-fw-package-row:focus-visible { outline: 2px solid var(--tc-rail-active-color, currentColor); outline-offset: 1px; }
+.tc-fw-pkg-release { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .tc-fw-pkg-date, .tc-fw-pkg-file { color: var(--w-ink-2); }
 .tc-fw-installed { color: #3f9e5b; }
 .tc-fw-channels { display: flex; gap: 6px; margin-bottom: 6px; }
@@ -10359,8 +10360,8 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   // owner's own wording (owner 2026-10-01), mirrored in the manual chapter
   // (tools/tc-web-manual/src/content/chapters/firmware-update.mdx). Each step is
   // a list of paragraphs. `twoFiles` is the one added line (coordinator brief
-  // 2026-09-29), using the owner's nouns "the firmware file" and "the second
-  // file" (owner 2026-09-29).
+  // 2026-09-29), using the owner's nouns ".bin file" and ".dat file" (owner
+  // 2026-10-01).
   var FW_UPDATE_TEXT = {
     steps: [
       ['Press SHIFT and triple-tap RESET, then, while still holding SHIFT, press and hold TRACK 1.'],
@@ -10371,7 +10372,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         'The progress of the update is represented on the LED ring.',
         'Tetrachords will reboot once the update process is complete.'],
     ],
-    twoFiles: 'An update writes two files: the firmware file and the second file.',
+    twoFiles: 'An update consists of two files: a .bin file and a .dat file.',
     installed: 'installed',
     update: 'Update',
     // SCAFFOLD: everything below in this object is placeholder wording for the
@@ -13979,11 +13980,12 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
         onClick: function () { setPendingPackage(pkg); },
         onKeyDown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPendingPackage(pkg); } },
       },
-        ce('span', { className: 'tc-fw-pkg-version' }, 'v' + pkg.version),
-        ce('span', { className: 'tc-fw-pkg-date' }, pkg.date || ''),
-        ce('code', { className: 'tc-fw-pkg-id' }, pkg.id),
-        ce('span', { className: 'tc-fw-pkg-file' }, (fw.file || '') + ' · ' + fmtBytes(fw.size || 0)),
-        ce('span', { className: 'tc-fw-pkg-file' }, (s7.file || '') + ' · ' + fmtBytes(s7.size || 0)),
+        ce('div', { className: 'tc-fw-pkg-release' },
+          ce('span', { className: 'tc-fw-pkg-version' }, 'v' + pkg.version),
+          ce('span', { className: 'tc-fw-pkg-date' }, pkg.date || ''),
+          ce('code', { className: 'tc-fw-pkg-id' }, pkg.id)),
+        ce('div', { className: 'tc-fw-pkg-file' }, (fw.file || '') + ' · ' + fmtBytes(fw.size || 0)),
+        ce('div', { className: 'tc-fw-pkg-file' }, (s7.file || '') + ' · ' + fmtBytes(s7.size || 0)),
         installed ? ce('span', { className: 'tc-fw-installed' }, FW_UPDATE_TEXT.installed) : null);
     }
 
