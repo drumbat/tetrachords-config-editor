@@ -10356,17 +10356,16 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   };
 
   // Firmware update steps, shown inside the FIRMWARE UPDATE panel. `steps` is the
-  // owner's own wording copied verbatim from the manual chapter
-  // (tools/tc-web-manual/src/content/chapters/firmware-update.mdx, steps 1, 3, 4
-  // and 5; step 2, placing the .bin on the card by hand, is what the editor does
-  // instead, so it is left out). Each step is a list of paragraphs. `twoFiles` is
-  // the one added line (coordinator brief 2026-09-29), using the owner's nouns
-  // "the firmware file" and "the second file" (owner 2026-09-29).
+  // owner's own wording (owner 2026-10-01), mirrored in the manual chapter
+  // (tools/tc-web-manual/src/content/chapters/firmware-update.mdx). Each step is
+  // a list of paragraphs. `twoFiles` is the one added line (coordinator brief
+  // 2026-09-29), using the owner's nouns "the firmware file" and "the second
+  // file" (owner 2026-09-29).
   var FW_UPDATE_TEXT = {
     steps: [
-      ['Power off the module.', 'Remove any CV, MIDI, USB or i2c connections.'],
-      ['Whilst holding down the SHIFT and TRACK 1 buttons, power up the Tetrachords.', 'Once the module powers up, release SHIFT and TRACK 1.'],
-      ['Press the green RGB button to update.', 'Press the red RGB button to boot up without updating the firmware.'],
+      ['Press SHIFT and triple-tap RESET, then, while still holding SHIFT, press and hold TRACK 1.'],
+      ['Once the module reboots, release SHIFT and TRACK 1.'],
+      ['Press the green RGB button to update, or press the red RGB button to boot up without updating the firmware.'],
       ['Wait for the firmware to update. It should take about 20 seconds.',
         "Don't turn off the power, plug anything in or otherwise interact with the module whilst it is updating.",
         'The progress of the update is represented on the LED ring.',
@@ -10378,18 +10377,18 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     // SCAFFOLD: everything below in this object is placeholder wording for the
     // two-file push (coordinator brief 2026-09-29), pending the owner's words.
     // {name} placeholders are filled by fwText().
-    installNote: 'The first normal start after the update installs the second file. If it does not match, the LEDs show red.',
+    installNote: 'The first normal start after the update installs the .dat file. If it does not match, the LEDs show red.',
     pushSteps: [
       { id: 'check', label: 'Download and check both files' },
-      { id: 'firmware', label: 'Write the firmware file' },
+      { id: 'firmware', label: 'Write the .bin file' },
       { id: 'restart', label: 'Restart the module' },
       { id: 'reconnect', label: 'Reconnect' },
-      { id: 'second', label: 'Write the second file' },
+      { id: 'second', label: 'Write the .dat file' },
     ],
     pushDone: 'Both files are on the card. To install the update:',
     pushFailed: 'The update stopped.',
-    pushFailedFirmwareOnCard: 'The new firmware file is already on the card. Finish the update (retry) before doing the SHIFT and TRACK 1 install, or the module will show red at start.',
-    retrySecond: 'Try the second file again',
+    pushFailedFirmwareOnCard: 'The new .bin file is already on the card. Finish the update (retry) before doing the SHIFT and TRACK 1 install, or the module will show red at start.',
+    retrySecond: 'Try the .dat file again',
     close: 'Close',
     busyConnect: 'A firmware update is in progress.',
     unsavedTitle: 'Unsaved changes',
@@ -10406,14 +10405,14 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     errVersion: 'Version {version} cannot be written as a firmware file name.',
     errPackage: 'This package is missing a file.',
     errUid: 'Could not read the module\'s id: {detail}',
-    errFirmwareWrite: 'Writing the firmware file failed: {detail}',
-    errFirmwareVerify: 'The firmware file on the card did not check out, so it was discarded: {detail}',
+    errFirmwareWrite: 'Writing the .bin file failed: {detail}',
+    errFirmwareVerify: 'The .bin file on the card did not check out, so it was discarded: {detail}',
     errRestart: 'Could not restart the module: {detail}',
-    errReconnect: 'The module did not come back after the restart. Unplug and replug it, then press "Try the second file again".',
+    errReconnect: 'The module did not come back after the restart. Unplug and replug it, then press "Try the .dat file again".',
     errNotRun: 'After the restart the module reported {mode} mode, not normal (RUN) mode.',
     errNotCapable: 'After the restart the module does not accept update files over USB.',
     errNoHello: 'After the restart the module did not answer.',
-    errSecondWrite: 'Writing the second file failed: {detail}',
+    errSecondWrite: 'Writing the .dat file failed: {detail}',
   };
   // Fill {name} placeholders in an FW_UPDATE_TEXT string.
   function fwText(template, vars) {
@@ -11059,9 +11058,10 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     // module; showing FACTORY selected when absent is honest, not a lie.
     var noAbsentOption = props.noAbsentOption;
     if (!absent && opts.indexOf(value) === -1) opts.unshift(value);  // surface a real-but-unlisted value
+    var optionLabel = props.optionLabel || function (o) { return o; };
     var children = [];
     if (absent && !noAbsentOption) children.push(ce('option', { key: '__absent', value: '' }, '- not set -'));
-    opts.forEach(function (o) { children.push(ce('option', { key: o, value: o }, o)); });
+    opts.forEach(function (o) { children.push(ce('option', { key: o, value: o }, optionLabel(o))); });
     var selected = absent ? (noAbsentOption ? (props.absentDisplay || '') : '') : value;
     return ce('select', { className: 'tc-select', value: selected, onChange: function (e) { onCommit(e.target.value); } }, children);
   }
@@ -11077,6 +11077,13 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
   // slot 8, so the picker shows them as CAL_7 / CAL_8 and leaves the line untouched.
   var CAL_SLOT_DEFAULT_LABEL = { CAL_7: 'Hz/V', CAL_8: 'HEL' };
   var CAL_SLOT_LEGACY_VALUE = { HZV_CALIBRATION: 'CAL_7', ODESSA_HEL_CALIBRATION: 'CAL_8' };
+  // Owner request 2026-10-01: the dropdown's own option text for slots 7/8 carries the
+  // same Hz/V / HEL meaning as the ticked box beside it, so the choice reads the same way
+  // closed as it does ticked. Label layer only - the stored/selected value is still the
+  // raw CAL_7 / CAL_8 string (calSlotView, compose) and CONFIG.TXT is untouched.
+  var CAL_SLOT_OPTION_LABEL = { CAL_7: 'CAL_7 (Hz/V)', CAL_8: 'CAL_8 (HEL)' };
+  function calSlotOptionLabel(o) { return CAL_SLOT_OPTION_LABEL[o] || o; }
+  window.TCEditorUtil.calSlotOptionLabel = calSlotOptionLabel;
 
   // Pure, host-tested (cal-slot-picker.test.js): what the picker selects and which
   // label, if any, it shows for a card value ('' / null = no line on the card).
@@ -11095,7 +11102,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
           type: 'checkbox', className: 'tc-checkbox', checked: true, disabled: true,
           tabIndex: -1, 'aria-hidden': true,
         })) : null,
-      ce(SelectField, { value: view.selected, options: props.options, onCommit: props.onCommit, noAbsentOption: true, absentDisplay: 'FACTORY' }));
+      ce(SelectField, { value: view.selected, options: props.options, onCommit: props.onCommit, noAbsentOption: true, absentDisplay: 'FACTORY', optionLabel: calSlotOptionLabel }));
   }
 
   // Tick-box rendering for ON/OFF ENUM fields opted into it (config-schema.js
