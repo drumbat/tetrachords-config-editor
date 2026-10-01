@@ -1,38 +1,38 @@
 {
-  "generated": "2026-10-01T07:38:59.480Z",
+  "generated": "2026-10-01T07:47:23.941Z",
   "releases": [
     {
       "version": "1.1.2.1",
       "file": "tetrachords_1_1_2_1.bin",
-      "size": 778460,
-      "sha256": "23b299804492c9fea58956e5a53cfaf516cc29e5c505c9c7be2c0fa1e4a38369",
-      "url": "firmware/a107bdcb/tetrachords_1_1_2_1.bin"
+      "size": 782852,
+      "sha256": "7352ae7bb22245553199e6d9feb9d94d052c0fdbf5e25a4476ac7b81e891b98f",
+      "url": "firmware/c1be615f/tetrachords_1_1_2_1.bin"
     }
   ],
   "packages": [
     {
-      "id": "a107bdcb",
+      "id": "c1be615f",
       "version": "1.1.2.1",
-      "date": "2026-09-29",
+      "date": "2026-10-01",
       "channel": "beta",
       "identity": {
         "schema": "firmware-staging-manifest-1",
-        "source_commit": "a107bdc",
-        "source_commit_full": "a107bdcbf5668a3aafead91754c37c5e77ea9578",
-        "expected_fw_build_id": "0x0A107BDC",
+        "source_commit": "c1be615",
+        "source_commit_full": "c1be615f04ef8204a007bf53ca15c1d5a53d4062",
+        "expected_fw_build_id": "0x0C1BE615",
         "hello_caps": "0x0003958D"
       },
       "firmware": {
         "file": "tetrachords_1_1_2_1.bin",
-        "url": "firmware/a107bdcb/tetrachords_1_1_2_1.bin",
-        "size": 778460,
-        "sha256": "23b299804492c9fea58956e5a53cfaf516cc29e5c505c9c7be2c0fa1e4a38369"
+        "url": "firmware/c1be615f/tetrachords_1_1_2_1.bin",
+        "size": 782852,
+        "sha256": "7352ae7bb22245553199e6d9feb9d94d052c0fdbf5e25a4476ac7b81e891b98f"
       },
       "sector7": {
         "file": "tc_firmware_b_2.dat",
-        "url": "firmware/a107bdcb/tc_firmware_b_2.dat",
+        "url": "firmware/c1be615f/tc_firmware_b_2.dat",
         "size": 88865,
-        "sha256": "1e4313cada6eafdead8e53779d9b8e5b4b46948b5c87d7b0da21198c9aedc4e1"
+        "sha256": "dae78af8c424f1499a74169fa5a46f3fb1f2a5549b3586f61cb9b7f33d8ba1b5"
       }
     }
   ]
