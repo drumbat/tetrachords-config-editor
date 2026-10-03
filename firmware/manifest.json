@@ -1,38 +1,45 @@
 {
-  "generated": "2026-10-01T11:08:18.650Z",
+  "generated": "2026-10-03T09:50:40.719Z",
   "releases": [
     {
       "version": "1.1.2.1",
       "file": "tetrachords_1_1_2_1.bin",
-      "size": 783628,
-      "sha256": "d139c01561c63609b179f3828f4c0bd850b1a1cf7fe1b548324728bdde7ce399",
-      "url": "firmware/9ae7fecf/tetrachords_1_1_2_1.bin"
+      "size": 783440,
+      "sha256": "d976a10eec7a34247bb232cbfb95ca5efd87a3d8af6d811a1d1aeb6e43d92fc9",
+      "url": "firmware/2368c220/tetrachords_1_1_2_1.bin"
     }
   ],
   "packages": [
     {
-      "id": "9ae7fecf",
+      "id": "2368c220",
       "version": "1.1.2.1",
-      "date": "2026-10-01",
-      "channel": "beta",
+      "date": "2026-10-03",
+      "built_at": "2026-10-03T09:21:36Z",
+      "release_type": "Beta",
       "identity": {
         "schema": "firmware-staging-manifest-1",
-        "source_commit": "9ae7fec",
-        "source_commit_full": "9ae7fecfc56ec61d93bd66a9a1566531c2f989f1",
-        "expected_fw_build_id": "0x09AE7FEC",
-        "hello_caps": "0x0003958D"
+        "source_commit": "2368c22",
+        "source_commit_full": "2368c220f910d88e19ca9901015bc03ebf92b2c0",
+        "expected_fw_build_id": "0x02368C22",
+        "hello_caps": "0x0007958D"
       },
       "firmware": {
         "file": "tetrachords_1_1_2_1.bin",
-        "url": "firmware/9ae7fecf/tetrachords_1_1_2_1.bin",
-        "size": 783628,
-        "sha256": "d139c01561c63609b179f3828f4c0bd850b1a1cf7fe1b548324728bdde7ce399"
+        "url": "firmware/2368c220/tetrachords_1_1_2_1.bin",
+        "size": 783440,
+        "sha256": "d976a10eec7a34247bb232cbfb95ca5efd87a3d8af6d811a1d1aeb6e43d92fc9"
       },
       "sector7": {
         "file": "tc_firmware_b_2.dat",
-        "url": "firmware/9ae7fecf/tc_firmware_b_2.dat",
-        "size": 88865,
-        "sha256": "25719fd56463bc41f4e097a2382fd54192e4c91c9b3f0170c54796c4aa2618d2"
+        "url": "firmware/2368c220/tc_firmware_b_2.dat",
+        "size": 67441,
+        "sha256": "f936eaeba68ed1f2050ecda2310ac1a7bd64660704d1ae49bd1362ca1b7487f8"
+      },
+      "zip": {
+        "file": "tetrachords-beta-sd-card-2368c220.zip",
+        "url": "firmware/2368c220/tetrachords-beta-sd-card-2368c220.zip",
+        "size": 530379,
+        "sha256": "b20a745af4ffe308467f5f4896326117d22c900e51fd337ee881ad38081f51d6"
       }
     }
   ]
