@@ -16744,7 +16744,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
 
    window.TCTuningsLibrary = { Panel, Modal, BankKnob, LedRing,
      openUploadPicker, positionIsCard, uploadFileName, uploadPlan, uploadToBank,
-     stalePositionFiles, displayTuningName, BUILTIN_BANK_LABELS, BANK_COUNT,
+     stalePositionFiles, displayTuningName, displayBankLabel, banksNeedingFactoryLabel, nameFactoryBanks, BUILTIN_BANK_LABELS, BANK_COUNT,
      BANK_POSITIONS }
    openUploadPicker is the Tuning File Creator's hand-off; it stays while the
    creator is quarantined (returns post-release, owner 2026-10-02).
@@ -16770,6 +16770,42 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     1: 'western', 2: 'dynamic_just_intonation', 3: 'fixed_small_scales',
     4: 'dynamic_small_scales', 5: 'fixed_harmonic', 6: 'modal_traditions', 7: 'non_octave',
   };
+
+  // Name shown for a bank: the card folder's label, or for an unlabelled bank whose
+  // content is the built-in flash bank the factory name ("Fixed small scales"). An
+  // unlabelled card bank shows no name. Display only: bank.label stays empty so
+  // uploadPlan and the rename box still see an unlabelled bank.
+  function displayBankLabel(bank) {
+    if (bank && bank.label) return bank.label;
+    var slug = bank && bank.source === 'builtin' && BUILTIN_BANK_LABELS[bank.bank];
+    if (!slug) return '';
+    var words = slug.replace(/_/g, ' ');
+    return words.charAt(0).toUpperCase() + words.slice(1);
+  }
+
+  // Banks that are the built-in flash bank with no card folder label: the editor writes
+  // the factory name to the card for each, so the name lives on the card. An empty
+  // labelled card folder sets only the label and leaves the flash tunings playing
+  // (Core/Src/at_tuning_banks.c overlay_card_bank), so the bank stays source 'builtin'.
+  function banksNeedingFactoryLabel(banks) {
+    return (banks || []).filter(function (b) {
+      return b && b.source === 'builtin' && !b.label && !!BUILTIN_BANK_LABELS[b.bank];
+    });
+  }
+
+  // Writes the factory name to the card for each such bank not yet in `attempted`
+  // (marked on the way, one attempt each, so a refused write is never retried in a
+  // loop). A refusal (no card, read-only card) is skipped silently. Resolves true when
+  // at least one name was written, so the caller re-lists.
+  function nameFactoryBanks(client, banks, attempted) {
+    var wrote = false;
+    return banksNeedingFactoryLabel(banks).filter(function (b) { return !attempted[b.bank]; })
+      .reduce(function (p, b) {
+        attempted[b.bank] = true;
+        return p.then(function () { return client.tuningBankLabelSet(b.bank, BUILTIN_BANK_LABELS[b.bank]); })
+          .then(function () { wrote = true; }, function () { /* refused: skip silently */ });
+      }, Promise.resolve()).then(function () { return wrote; });
+  }
 
   // True when a position plays a card file. One card file replaces one built-in tuning
   // (2026-10-02), so a bank can mix card and built-in positions; cardMask says which.
@@ -17265,11 +17301,11 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
             },
             onBlur: function () { commitRename(b); },
           })
-        : ce('span', { className: 'tl-bank-name', title: b.label || null }, b.label || '');
+        : ce('span', { className: 'tl-bank-name', title: displayBankLabel(b) || null }, displayBankLabel(b));
       return ce('div', {
         key: b.bank, role: 'button', tabIndex: 0,
         className: 'tl-bank-row' + (isShown ? ' shown' : '') + (isSel ? ' selected' : ''),
-        'aria-label': 'bank ' + b.bank + (b.label ? ' ' + b.label : ''),
+        'aria-label': 'bank ' + b.bank + (displayBankLabel(b) ? ' ' + displayBankLabel(b) : ''),
         onClick: show,
         onDoubleClick: editing ? null : function () { startRename(b); },
         onKeyDown: function (e) { if (!editing && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); show(); } },
@@ -17355,7 +17391,7 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     // TUNING_BANK_LABEL_SET creates the empty card directory, so naming is how
     // a fresh card bank starts before its first upload.
     var shownTitle = ce('div', { className: 'tl-col-head tl-shown-head' },
-      ce('span', { className: 'tl-shown-title', title: (shown && shown.label) || null }, (shown && shown.label) ? shown.label : ('bank ' + shownBank)));
+      ce('span', { className: 'tl-shown-title', title: (shown && displayBankLabel(shown)) || null }, (shown && displayBankLabel(shown)) ? displayBankLabel(shown) : ('bank ' + shownBank)));
 
     return ce('div', { className: 'tc-modal-back', onClick: doClose, role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Tunings Library' },
       ce('div', { className: 'tc-modal tl-modal', onClick: function (e) { e.stopPropagation(); } },
@@ -17395,11 +17431,19 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
 
     function showToast(msg) { if (props.showToast) props.showToast(msg); else setNote(msg); }
 
+    // Banks already offered a factory-name write this connection: one attempt each, so a
+    // refused write (no card, read-only card) is skipped silently and never retried in a loop.
+    var namedRef = useRef({});
+
     function refresh() {
       var c = props.client;
-      if (!live || !c) { setBanks(null); setSelection(null); return Promise.resolve(); }
+      if (!live || !c) { namedRef.current = {}; setBanks(null); setSelection(null); return Promise.resolve(); }
       return Promise.all([c.tuningBanksList(), c.tuningSelectionGet()]).then(function (r) {
         setBanks(r[0]); setSelection(r[1]); setLoadErr(null);
+        return nameFactoryBanks(c, r[0], namedRef.current).then(function (named) {
+          if (!named) return null;
+          return c.tuningBanksList().then(function (list) { setBanks(list); }, function () { /* keep the first list */ });
+        });
       }, function (e) { setLoadErr(classifyLoadError(e)); });
     }
 
@@ -17452,6 +17496,9 @@ window.TC_SCHEMA = {"sections":[{"id":"channels","title":"MIDI CHANNELS","fields
     uploadFileName: uploadFileName, uploadPlan: uploadPlan, uploadToBank: uploadToBank,
     stalePositionFiles: stalePositionFiles,
     displayTuningName: displayTuningName,
+    displayBankLabel: displayBankLabel,
+    banksNeedingFactoryLabel: banksNeedingFactoryLabel,
+    nameFactoryBanks: nameFactoryBanks,
     BUILTIN_BANK_LABELS: BUILTIN_BANK_LABELS,
     BANK_COUNT: BANK_COUNT, BANK_POSITIONS: BANK_POSITIONS,
   };
